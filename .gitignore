@@ -1,0 +1,11 @@
+.env
+backend/.env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+dist/
+.pytest_cache/
+backend/.auth_secret
+backend/gen3d_edu.db

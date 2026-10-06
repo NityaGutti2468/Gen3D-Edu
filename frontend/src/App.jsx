@@ -20,10 +20,17 @@ const demo = {
   ],
 };
 
+const lessonDraft = {
+  concept: 'Your next lesson', domain: 'Interactive Learning', learning_objective: 'Enter a topic or question to generate a clear, step-by-step visual explanation.',
+  objects: [{ id: 'lesson-prompt', type: 'text', label: 'Ready when you are', properties: { content: 'Your visual lesson will appear here.' } }],
+  steps: [{ step: 1, title: 'Start with a question', explanation: 'Describe a concept in the box. Gen3D-Edu will build a visual walkthrough for that topic.', insight: 'Your generated lesson will replace this preview.', actions: [{ action: 'show', target: 'lesson-prompt', parameters: {} }] }],
+};
+
 export default function App() {
   const [theme, setTheme] = useState(() => window.localStorage.getItem('gen3d-theme') || 'dark');
   const [plan, setPlan] = useState(demo);
   const [isSample, setIsSample] = useState(true);
+  const [isDraft, setIsDraft] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [apiState, setApiState] = useState('checking');
   const [error, setError] = useState('');
@@ -35,7 +42,7 @@ export default function App() {
   const [page, setPage] = useState('dashboard');
   const playback = usePlayback(plan.steps.length);
   const step = plan.steps[playback.currentStep];
-  const validation = useMemo(() => isSample ? { valid: true, label: 'Sample plan' } : { valid: true, label: 'Plan validated' }, [isSample]);
+  const validation = useMemo(() => isDraft ? { valid: true, label: 'Ready for prompt' } : isSample ? { valid: true, label: 'Sample plan' } : { valid: true, label: 'Plan validated' }, [isDraft, isSample]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -62,18 +69,18 @@ export default function App() {
     setError('');
     try {
       const saved = await getSavedLesson(id);
-      setPlan(saved.plan); setIsSample(false); setActiveLessonId(saved.id); playback.restart(); setPage('studio');
+      setPlan(saved.plan); setIsSample(false); setIsDraft(false); setActiveLessonId(saved.id); playback.restart(); setPage('studio');
     } catch (err) { setError(err.message || 'Could not open this lesson.'); }
   }
 
   async function onSignOut() {
     try { await signOut(); } catch { /* Clear the local view even if the session expired. */ }
-    setUser(null); setHistory([]); setActiveLessonId(null); setPlan(demo); setIsSample(true);
+    setUser(null); setHistory([]); setActiveLessonId(null); setPlan(demo); setIsSample(true); setIsDraft(false);
     setPage('dashboard');
   }
 
   function startNewLesson() {
-    setError(''); setPrompt(''); setPlan(demo); setIsSample(true); setActiveLessonId(null); playback.restart(); setPage('studio');
+    setError(''); setPrompt(''); setPlan(lessonDraft); setIsSample(false); setIsDraft(true); setActiveLessonId(null); playback.restart(); setPage('studio');
   }
 
   async function onGenerate(event) {
@@ -82,7 +89,7 @@ export default function App() {
     setGenerating(true); setError('');
     try {
       const result = await generatePlan(prompt.trim());
-      setPlan(result.plan); setIsSample(false); setActiveLessonId(result.lesson_id); setPrompt(''); playback.restart();
+      setPlan(result.plan); setIsSample(false); setIsDraft(false); setActiveLessonId(result.lesson_id); setPrompt(''); playback.restart();
       setHistory(await getLessonHistory());
       setPage('studio');
     } catch (err) { setError(err.message || 'Lesson generation failed.'); }
@@ -105,14 +112,14 @@ export default function App() {
 
   return <main className="app-shell">
     <header className="topbar"><a className="brand" href="#top"><span className="brand-mark"><Layers3 size={19} /></span><span>gen3d<span className="brand-light">·edu</span></span></a><div className="topbar-right"><button className="dashboard-back" onClick={() => setPage('dashboard')}><BookOpen size={14} /> Dashboard</button><span className={`connection ${apiState}`}><i />{apiState === 'online' ? 'API connected' : apiState === 'offline' ? 'API offline' : 'Checking API'}</span><button className="help-button" title="About this prototype"><CircleHelp size={17} /></button><span className="account-name">{user.name}</span><button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>{theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}<span>{theme === 'dark' ? 'Light' : 'Dark'} mode</span></button><button className="signout-button" onClick={onSignOut} title="Sign out"><LogOut size={15} /><span>Sign out</span></button></div></header>
-    <section className="welcome"><div><div className="kicker"><Sparkles size={13} /> INTERACTIVE LEARNING STUDIO</div><h1>Ideas are better in motion.</h1><p>Turn an educational question into a visual, step-by-step lesson.</p></div><div className="sample-stamp"><span>✳</span> {isSample ? 'SAMPLE LESSON' : 'GENERATED LESSON'}</div></section>
+    <section className="welcome"><div><div className="kicker"><Sparkles size={13} /> INTERACTIVE LEARNING STUDIO</div><h1>Ideas are better in motion.</h1><p>Turn an educational question into a visual, step-by-step lesson.</p></div><div className="sample-stamp"><span>✳</span> {isDraft ? 'NEW LESSON' : isSample ? 'SAMPLE LESSON' : 'GENERATED LESSON'}</div></section>
     <section className="workbench">
       <aside className="panel lesson-nav"><div className="panel-label">LESSON OUTLINE <span>{String(plan.steps.length).padStart(2, '0')}</span></div><StepList steps={plan.steps} current={playback.currentStep} onSelect={playback.goToStep} /><section className="history-block"><div className="panel-label">SAVED LESSONS <span>{history.length}</span></div><div className="history-items">{history.length ? history.map((item) => <button key={item.id} className={`history-item ${activeLessonId === item.id ? 'active' : ''}`} onClick={() => openSavedLesson(item.id)}><strong>{item.concept}</strong><span>{item.domain}</span><time>{new Date(item.created_at).toLocaleDateString()}</time></button>) : <div className="history-empty">Generated lessons will be saved here for next time.</div>}</div></section><div className="objective-block"><div className="panel-label">LEARNING OBJECTIVE</div><h3>{plan.concept}</h3><p>{plan.learning_objective}</p><div className="domain-chip"><GraduationCap size={13} /> {plan.domain}</div></div></aside>
-      <section className="panel visualization"><div className="visual-top"><div><div className="visual-title">{plan.concept}</div><div className="visual-sub">Structured plan <span>/</span> Scene view</div></div><div className="visual-status"><span className="status-dot" /> {isSample ? 'EXAMPLE' : 'PLAN READY'}</div></div><div className="scene-grid" /><PlanScene plan={plan} stepIndex={playback.currentStep} /><div className="visual-bottom"><span><Command size={12} /> STEP {String(playback.currentStep + 1).padStart(2, '0')} / {String(plan.steps.length).padStart(2, '0')}</span><span>SCHEMA · VALIDATED</span></div><div className="playback-wrap"><PlaybackControls playback={playback} /></div><div className="progress-track"><i style={{ width: `${((playback.currentStep + 1) / plan.steps.length) * 100}%` }} /></div></section>
-      <aside className="right-rail"><section className="panel explain-panel"><div className="explain-heading"><span>THE WALKTHROUGH</span><span>{String(playback.currentStep + 1).padStart(2, '0')} — {String(plan.steps.length).padStart(2, '0')}</span></div><h2>{step.title}</h2><p>{step.explanation}</p><div className="key-insight"><span>✳ &nbsp; THE TAKEAWAY</span><p>{step.insight || plan.learning_objective}</p></div><div className="metrics"><div><span>PLAN STEPS</span><b>{String(plan.steps.length).padStart(2, '0')}</b></div><div><span>VALIDATION</span><b className="valid-text"><Check size={13} /> {validation.label}</b></div></div></section>
+      <section className="panel visualization"><div className="visual-top"><div><div className="visual-title">{plan.concept}</div><div className="visual-sub">Structured plan <span>/</span> Scene view</div></div><div className="visual-status"><span className="status-dot" /> {isDraft ? 'AWAITING PROMPT' : isSample ? 'EXAMPLE' : 'PLAN READY'}</div></div><div className="scene-grid" /><PlanScene key={activeLessonId ?? (isDraft ? 'draft' : isSample ? 'sample' : plan.concept)} plan={plan} stepIndex={playback.currentStep} /><div className="visual-bottom"><span><Command size={12} /> STEP {String(playback.currentStep + 1).padStart(2, '0')} / {String(plan.steps.length).padStart(2, '0')}</span><span>{isDraft ? 'ENTER A TOPIC TO BEGIN' : 'SCHEMA · VALIDATED'}</span></div><div className="playback-wrap"><PlaybackControls playback={playback} /></div><div className="progress-track"><i style={{ width: `${((playback.currentStep + 1) / plan.steps.length) * 100}%` }} /></div></section>
+      <aside className="right-rail"><section className="panel explain-panel"><div className="explain-heading"><span>THE WALKTHROUGH</span><span>{String(playback.currentStep + 1).padStart(2, '0')} — {String(plan.steps.length).padStart(2, '0')}</span></div><div className="walkthrough-copy" key={`${activeLessonId ?? plan.concept}-${playback.currentStep}`}><h2>{step.title}</h2><p>{step.explanation}</p></div><div className="key-insight"><span>✳ &nbsp; THE TAKEAWAY</span><p>{step.insight || plan.learning_objective}</p></div><div className="metrics"><div><span>PLAN STEPS</span><b>{String(plan.steps.length).padStart(2, '0')}</b></div><div><span>VALIDATION</span><b className="valid-text"><Check size={13} /> {validation.label}</b></div></div></section>
         <section className="panel generate-panel"><div className="generate-head"><span className="spark-icon"><Sparkles size={14} /></span><div><h3>Make a new lesson</h3><p>What would you like to understand?</p></div></div><form onSubmit={onGenerate}><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. Show how gradient descent finds a minimum…" maxLength={1500} /><div className="form-footer"><span>{prompt.length}/1500</span><button className="generate-button" disabled={generating}>{generating ? <><LoaderCircle className="spin" size={14} /> Planning</> : <>Generate <ArrowUpRight size={14} /></>}</button></div></form>{error && <div className="error-message"><X size={13} />{error}</div>}<div className="pipeline"><span><i /> REASON</span><b>→</b><span><i /> VALIDATE</span><b>→</b><span><i /> VISUALIZE</span></div></section>
       </aside>
     </section>
-    <footer className="footer"><span><span className="footer-pulse" /> {isSample ? 'Exploring a sample AnimationPlan' : 'AnimationPlan generated and validated'}</span><span>Educational reasoning <b>→</b> structured plan <b>→</b> visual execution</span></footer>
+    <footer className="footer"><span><span className="footer-pulse" /> {isDraft ? 'Waiting for your lesson topic' : isSample ? 'Exploring a sample AnimationPlan' : 'AnimationPlan generated and validated'}</span><span>Educational reasoning <b>→</b> structured plan <b>→</b> visual execution</span></footer>
   </main>;
 }

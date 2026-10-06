@@ -36,8 +36,13 @@ def validate_plan(plan: AnimationPlan) -> dict:
                 errors.append(f"Step {expected}: {act.action.value} requires parameters.target_id referencing an existing object.")
             if act.action == ActionType.update_value and p.value is None:
                 errors.append(f"Step {expected}: update_value requires parameters.value.")
-            if act.action == ActionType.move and p.position is None:
-                errors.append(f"Step {expected}: move requires parameters.position.")
+            if act.action == ActionType.move:
+                target_object = next((obj for obj in plan.objects if obj.id == act.target), None)
+                if target_object is not None and target_object.type == ObjectType.pointer:
+                    if p.index is None:
+                        errors.append(f"Step {expected}: pointer move requires parameters.index so its array marker can move.")
+                elif p.position is None:
+                    errors.append(f"Step {expected}: move requires parameters.position.")
             if act.action == ActionType.wait and p.duration_ms is None:
                 warnings.append(f"Step {expected}: wait has no duration_ms; renderer uses a short pause.")
             if p.index is not None and arrays and any(p.index >= len(a.properties.values or []) for a in arrays):

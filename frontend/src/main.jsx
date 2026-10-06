@@ -5,5 +5,6 @@ import './styles.css';
 import './theme.css';
 import './account.css';
 import './theme-modes.css';
+import './motion.css';
 
 createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>);

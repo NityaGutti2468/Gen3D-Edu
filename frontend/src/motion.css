@@ -1,0 +1,22 @@
+/* Motion cues for step-by-step lesson playback. */
+.walkthrough-copy{animation:step-arrive .32s cubic-bezier(.2,.75,.25,1) both}
+.array-heading>span:first-child{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.active-range-label{border:1px solid #586bb4;border-radius:999px;padding:4px 7px;background:#222d57;color:#c2ccff;font:8px 'DM Mono';letter-spacing:.06em;animation:range-arrive .28s ease-out both}
+.array-cell{transition:transform .42s cubic-bezier(.2,.75,.25,1),opacity .36s ease,background .35s ease,border-color .35s ease,box-shadow .35s ease,filter .35s ease}
+.array-cell.highlighted{animation:cell-focus .42s cubic-bezier(.2,.75,.25,1) both}
+.scene-pointer{transition:left .55s cubic-bezier(.2,.8,.2,1),color .25s ease;z-index:2}
+.diagram-node{transition:left .58s cubic-bezier(.2,.8,.2,1),top .58s cubic-bezier(.2,.8,.2,1),transform .3s ease,box-shadow .3s ease,border-color .3s ease}
+.diagram-node.highlighted,.semantic-card.highlighted,.diagram-note.highlighted{animation:target-focus .42s cubic-bezier(.2,.75,.25,1) both}
+.chart-column{animation:chart-arrive .38s cubic-bezier(.2,.75,.25,1) both;animation-delay:calc(var(--col-index,0)*35ms)}
+.graph-lines g line{transition:stroke .28s ease,stroke-width .28s ease,opacity .28s ease}
+.graph-lines g.active-edge line{animation:edge-glow 1s ease-in-out infinite alternate}
+.packet-particle{fill:#fff;filter:drop-shadow(0 0 3px #85bcff);pointer-events:none}
+.diagram-note,.semantic-card,.dashboard-lesson{transition:transform .25s ease,border-color .25s ease,background .25s ease,box-shadow .25s ease}
+@keyframes step-arrive{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
+@keyframes range-arrive{from{opacity:0;transform:translateX(-5px) scale(.96)}to{opacity:1;transform:translateX(0) scale(1)}}
+@keyframes cell-focus{0%{transform:translateY(0) scale(1)}55%{transform:translateY(-8px) scale(1.04)}100%{transform:translateY(-6px) scale(1)}}
+@keyframes target-focus{0%{filter:brightness(1);transform:translateY(0) scale(.97)}60%{filter:brightness(1.35);transform:translateY(-7px) scale(1.025)}100%{filter:brightness(1);transform:translateY(-5px) scale(1)}}
+@keyframes chart-arrive{from{opacity:.35;transform:translateY(9px) scaleY(.92);transform-origin:bottom}to{opacity:1;transform:translateY(0) scaleY(1);transform-origin:bottom}}
+@keyframes edge-glow{from{filter:drop-shadow(0 0 1px #79baff44)}to{filter:drop-shadow(0 0 5px #79baffcc)}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+html[data-theme="light"] .active-range-label{background:#e8edff;border-color:#c3cef0;color:#4c62a3}

@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowUpRight, BookOpen, Check, CircleHelp, Command, GraduationCap, Layers3, LoaderCircle, LogOut, Moon, Plus, Sparkles, Sun, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUpRight, BookOpen, Check, CircleHelp, Command, GraduationCap, Layers3, LoaderCircle, LogOut, Moon, Plus, Sparkles, Star, Sun, Trash2, X } from 'lucide-react';
 import AuthScreen from './components/AuthScreen.jsx';
 import StepList from './components/StepList.jsx';
 import PlanScene from './components/PlanScene.jsx';
 import PlaybackControls from './components/PlaybackControls.jsx';
+import VoicePromptButton from './components/VoicePromptButton.jsx';
 import { usePlayback } from './hooks/usePlayback.js';
-import { generatePlan, getCurrentUser, getHealth, getLessonHistory, getSavedLesson, signOut } from './services/api.js';
+import { deleteSavedLessons, generatePlan, getCurrentUser, getHealth, getLessonHistory, getSavedLesson, setLessonPinned, signOut } from './services/api.js';
 
 const demo = {
   concept: 'Binary Search', domain: 'Computer Science · Algorithms', learning_objective: 'Find a target in a sorted array by repeatedly halving the search range.',
@@ -38,9 +39,18 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [history, setHistory] = useState([]);
+  const [manageLessons, setManageLessons] = useState(false);
+  const [selectedLessonIds, setSelectedLessonIds] = useState([]);
+  const [libraryError, setLibraryError] = useState('');
+  const [deletingLessons, setDeletingLessons] = useState(false);
   const [activeLessonId, setActiveLessonId] = useState(null);
   const [page, setPage] = useState('dashboard');
-  const playback = usePlayback(plan.steps.length);
+  const voiceSupported = typeof window !== 'undefined' && 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const playback = usePlayback(plan.steps.length, voiceEnabled);
+  const playbackPlayingRef = useRef(playback.isPlaying);
+  const wasPlayingRef = useRef(false);
+  playbackPlayingRef.current = playback.isPlaying;
   const step = plan.steps[playback.currentStep];
   const validation = useMemo(() => isDraft ? { valid: true, label: 'Ready for prompt' } : isSample ? { valid: true, label: 'Sample plan' } : { valid: true, label: 'Plan validated' }, [isDraft, isSample]);
 
@@ -48,6 +58,36 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem('gen3d-theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (!voiceEnabled || !voiceSupported || !step) return undefined;
+    const speech = window.speechSynthesis;
+    speech.cancel();
+    const utterance = new SpeechSynthesisUtterance(`${step.title}. ${step.explanation}`);
+    utterance.lang = navigator.language || 'en-US';
+    utterance.rate = 1;
+    let cancelled = false;
+    utterance.onend = () => {
+      if (!cancelled && playbackPlayingRef.current) playback.advanceStep();
+    };
+    speech.speak(utterance);
+    return () => {
+      cancelled = true;
+      speech.cancel();
+    };
+  }, [voiceEnabled, voiceSupported, step, plan.learning_objective, playback.currentStep, playback.advanceStep]);
+
+  useEffect(() => {
+    if (!voiceEnabled || !voiceSupported) { wasPlayingRef.current = false; return; }
+    const speech = window.speechSynthesis;
+    if (playback.isPlaying) speech.resume();
+    else if (wasPlayingRef.current && speech.speaking) speech.pause();
+    wasPlayingRef.current = playback.isPlaying;
+  }, [voiceEnabled, voiceSupported, playback.isPlaying]);
+
+  useEffect(() => () => {
+    if (voiceSupported) window.speechSynthesis.cancel();
+  }, [voiceSupported]);
 
   function toggleTheme() { setTheme((current) => current === 'dark' ? 'light' : 'dark'); }
 
@@ -79,6 +119,33 @@ export default function App() {
     setPage('dashboard');
   }
 
+  async function toggleLessonPin(item) {
+    setLibraryError('');
+    try {
+      await setLessonPinned(item.id, !item.is_pinned);
+      setHistory(await getLessonHistory());
+    } catch (err) { setLibraryError(err.message || 'Could not update the pin.'); }
+  }
+
+  function toggleLessonSelection(id) {
+    setSelectedLessonIds((selected) => selected.includes(id) ? selected.filter((selectedId) => selectedId !== id) : [...selected, id]);
+  }
+
+  async function removeSelectedLessons() {
+    if (!selectedLessonIds.length || deletingLessons) return;
+    const confirmed = window.confirm(`Delete ${selectedLessonIds.length} selected ${selectedLessonIds.length === 1 ? 'lesson' : 'lessons'}? This cannot be undone.`);
+    if (!confirmed) return;
+    setDeletingLessons(true); setLibraryError('');
+    try {
+      const deleted = new Set(selectedLessonIds);
+      await deleteSavedLessons(selectedLessonIds);
+      setHistory((items) => items.filter((item) => !deleted.has(item.id)));
+      if (deleted.has(activeLessonId)) setActiveLessonId(null);
+      setSelectedLessonIds([]); setManageLessons(false);
+    } catch (err) { setLibraryError(err.message || 'Could not delete the selected lessons.'); }
+    finally { setDeletingLessons(false); }
+  }
+
   function startNewLesson() {
     setError(''); setPrompt(''); setPlan(lessonDraft); setIsSample(false); setIsDraft(true); setActiveLessonId(null); playback.restart(); setPage('studio');
   }
@@ -103,8 +170,14 @@ export default function App() {
     <header className="topbar"><a className="brand" href="#top"><span className="brand-mark"><Layers3 size={19} /></span><span>gen3d<span className="brand-light">·edu</span></span></a><div className="topbar-right"><span className={`connection ${apiState}`}><i />{apiState === 'online' ? 'API connected' : apiState === 'offline' ? 'API offline' : 'Checking API'}</span><span className="account-name">{user.name}</span><button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>{theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}<span>{theme === 'dark' ? 'Light' : 'Dark'} mode</span></button><button className="signout-button" onClick={onSignOut} title="Sign out"><LogOut size={15} /><span>Sign out</span></button></div></header>
     <section className="dashboard-content"><div className="dashboard-welcome-row"><div><div className="kicker"><Sparkles size={13} /> YOUR LEARNING STUDIO</div><h1>Welcome back, {user.name.split(' ')[0]}.</h1><p className="dashboard-intro">Pick up where you left off, or turn a new question into an interactive lesson.</p></div><button className="dashboard-signout signout-button" onClick={onSignOut}><LogOut size={15} /><span>Sign out</span></button></div>
       <button className="dashboard-create" onClick={startNewLesson}><span><Plus size={19} /></span><div><strong>Create a new lesson</strong><small>Ask about any topic and explore it step by step.</small></div><ArrowUpRight size={17} /></button>
-      <section className="dashboard-lessons"><div className="dashboard-section-head"><div><div className="panel-label">YOUR LIBRARY</div><h2>Saved lessons</h2></div><span>{history.length} {history.length === 1 ? 'lesson' : 'lessons'}</span></div>
-        {history.length ? <div className="dashboard-grid">{history.map((item) => <button key={item.id} className="dashboard-lesson" onClick={() => openSavedLesson(item.id)}><span className="lesson-icon"><BookOpen size={17} /></span><span className="lesson-date">{new Date(item.created_at).toLocaleDateString()}</span><strong>{item.concept}</strong><small>{item.domain}</small><span className="lesson-open">Open lesson <ArrowUpRight size={13} /></span></button>)}</div> : <div className="dashboard-empty"><BookOpen size={20} /><strong>Your lessons will live here</strong><span>Create your first visual lesson and it will be saved to this library.</span></div>}
+      <section className="dashboard-lessons"><div className="dashboard-section-head"><div><div className="panel-label">YOUR LIBRARY</div><h2>Saved lessons</h2></div><div className="library-actions"><span>{history.length} {history.length === 1 ? 'lesson' : 'lessons'}</span>{history.length > 0 && <button className="library-manage-button" onClick={() => { setManageLessons((value) => !value); setSelectedLessonIds([]); setLibraryError(''); }}>{manageLessons ? 'Done' : 'Manage'}</button>}</div></div>
+        {manageLessons && history.length > 0 && <div className="library-selection-bar"><button onClick={() => setSelectedLessonIds(selectedLessonIds.length === history.length ? [] : history.map((item) => item.id))}>{selectedLessonIds.length === history.length ? 'Clear selection' : 'Select all'}</button><span>{selectedLessonIds.length} selected</span><button className="library-delete-button" onClick={removeSelectedLessons} disabled={!selectedLessonIds.length || deletingLessons}><Trash2 size={14} />{deletingLessons ? 'Deleting…' : 'Delete selected'}</button></div>}
+        {libraryError && <div className="error-message"><X size={13} />{libraryError}</div>}
+        {history.length ? <div className="dashboard-grid">{history.map((item) => <article key={item.id} className={`dashboard-lesson ${item.is_pinned ? 'pinned' : ''} ${selectedLessonIds.includes(item.id) ? 'selected' : ''}`}>
+          <button className="dashboard-lesson-open" onClick={() => openSavedLesson(item.id)}><span className="lesson-icon"><BookOpen size={17} /></span><span className="lesson-date">{new Date(item.created_at).toLocaleDateString()}</span><strong>{item.concept}</strong><small>{item.domain}</small><span className="lesson-open">Open lesson <ArrowUpRight size={13} /></span></button>
+          <button className={`lesson-pin-button ${item.is_pinned ? 'active' : ''}`} onClick={() => toggleLessonPin(item)} aria-label={item.is_pinned ? `Unpin ${item.concept}` : `Pin ${item.concept}`} aria-pressed={Boolean(item.is_pinned)} title={item.is_pinned ? 'Unpin lesson' : 'Pin lesson'}><Star size={15} fill={item.is_pinned ? 'currentColor' : 'none'} /></button>
+          {manageLessons && <label className="lesson-select"><input type="checkbox" checked={selectedLessonIds.includes(item.id)} onChange={() => toggleLessonSelection(item.id)} aria-label={`Select ${item.concept} for deletion`} /><span>Select</span></label>}
+        </article>)}</div> : <div className="dashboard-empty"><BookOpen size={20} /><strong>Your lessons will live here</strong><span>Create your first visual lesson and it will be saved to this library.</span></div>}
       </section>
     </section>
     <footer className="footer"><span><span className="footer-pulse" /> A workspace for curious minds</span><span>Ask <b>→</b> understand <b>→</b> remember</span></footer>
@@ -115,9 +188,9 @@ export default function App() {
     <section className="welcome"><div><div className="kicker"><Sparkles size={13} /> INTERACTIVE LEARNING STUDIO</div><h1>Ideas are better in motion.</h1><p>Turn an educational question into a visual, step-by-step lesson.</p></div><div className="sample-stamp"><span>✳</span> {isDraft ? 'NEW LESSON' : isSample ? 'SAMPLE LESSON' : 'GENERATED LESSON'}</div></section>
     <section className="workbench">
       <aside className="panel lesson-nav"><div className="panel-label">LESSON OUTLINE <span>{String(plan.steps.length).padStart(2, '0')}</span></div><StepList steps={plan.steps} current={playback.currentStep} onSelect={playback.goToStep} /><section className="history-block"><div className="panel-label">SAVED LESSONS <span>{history.length}</span></div><div className="history-items">{history.length ? history.map((item) => <button key={item.id} className={`history-item ${activeLessonId === item.id ? 'active' : ''}`} onClick={() => openSavedLesson(item.id)}><strong>{item.concept}</strong><span>{item.domain}</span><time>{new Date(item.created_at).toLocaleDateString()}</time></button>) : <div className="history-empty">Generated lessons will be saved here for next time.</div>}</div></section><div className="objective-block"><div className="panel-label">LEARNING OBJECTIVE</div><h3>{plan.concept}</h3><p>{plan.learning_objective}</p><div className="domain-chip"><GraduationCap size={13} /> {plan.domain}</div></div></aside>
-      <section className="panel visualization"><div className="visual-top"><div><div className="visual-title">{plan.concept}</div><div className="visual-sub">Structured plan <span>/</span> Scene view</div></div><div className="visual-status"><span className="status-dot" /> {isDraft ? 'AWAITING PROMPT' : isSample ? 'EXAMPLE' : 'PLAN READY'}</div></div><div className="scene-grid" /><PlanScene key={activeLessonId ?? (isDraft ? 'draft' : isSample ? 'sample' : plan.concept)} plan={plan} stepIndex={playback.currentStep} /><div className="visual-bottom"><span><Command size={12} /> STEP {String(playback.currentStep + 1).padStart(2, '0')} / {String(plan.steps.length).padStart(2, '0')}</span><span>{isDraft ? 'ENTER A TOPIC TO BEGIN' : 'SCHEMA · VALIDATED'}</span></div><div className="playback-wrap"><PlaybackControls playback={playback} /></div><div className="progress-track"><i style={{ width: `${((playback.currentStep + 1) / plan.steps.length) * 100}%` }} /></div></section>
+      <section className="panel visualization"><div className="visual-top"><div><div className="visual-title">{plan.concept}</div><div className="visual-sub">Structured plan <span>/</span> Scene view</div></div><div className="visual-status"><span className="status-dot" /> {isDraft ? 'AWAITING PROMPT' : isSample ? 'EXAMPLE' : 'PLAN READY'}</div></div><div className="scene-grid" /><PlanScene key={activeLessonId ?? (isDraft ? 'draft' : isSample ? 'sample' : plan.concept)} plan={plan} stepIndex={playback.currentStep} /><div className="visual-bottom"><span><Command size={12} /> STEP {String(playback.currentStep + 1).padStart(2, '0')} / {String(plan.steps.length).padStart(2, '0')}</span><span>{isDraft ? 'ENTER A TOPIC TO BEGIN' : 'SCHEMA · VALIDATED'}</span></div><div className="playback-wrap"><PlaybackControls playback={playback} voiceEnabled={voiceEnabled} onToggleVoice={() => setVoiceEnabled((enabled) => !enabled)} voiceSupported={voiceSupported} /></div><div className="progress-track"><i style={{ width: `${((playback.currentStep + 1) / plan.steps.length) * 100}%` }} /></div></section>
       <aside className="right-rail"><section className="panel explain-panel"><div className="explain-heading"><span>THE WALKTHROUGH</span><span>{String(playback.currentStep + 1).padStart(2, '0')} — {String(plan.steps.length).padStart(2, '0')}</span></div><div className="walkthrough-copy" key={`${activeLessonId ?? plan.concept}-${playback.currentStep}`}><h2>{step.title}</h2><p>{step.explanation}</p></div><div className="key-insight"><span>✳ &nbsp; THE TAKEAWAY</span><p>{step.insight || plan.learning_objective}</p></div><div className="metrics"><div><span>PLAN STEPS</span><b>{String(plan.steps.length).padStart(2, '0')}</b></div><div><span>VALIDATION</span><b className="valid-text"><Check size={13} /> {validation.label}</b></div></div></section>
-        <section className="panel generate-panel"><div className="generate-head"><span className="spark-icon"><Sparkles size={14} /></span><div><h3>Make a new lesson</h3><p>What would you like to understand?</p></div></div><form onSubmit={onGenerate}><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. Show how gradient descent finds a minimum…" maxLength={1500} /><div className="form-footer"><span>{prompt.length}/1500</span><button className="generate-button" disabled={generating}>{generating ? <><LoaderCircle className="spin" size={14} /> Planning</> : <>Generate <ArrowUpRight size={14} /></>}</button></div></form>{error && <div className="error-message"><X size={13} />{error}</div>}<div className="pipeline"><span><i /> REASON</span><b>→</b><span><i /> VALIDATE</span><b>→</b><span><i /> VISUALIZE</span></div></section>
+        <section className="panel generate-panel"><div className="generate-head"><span className="spark-icon"><Sparkles size={14} /></span><div><h3>Make a new lesson</h3><p>What would you like to understand?</p></div></div><form onSubmit={onGenerate}><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. Show how gradient descent finds a minimum…" maxLength={1500} /><div className="form-footer"><span>{prompt.length}/1500</span><VoicePromptButton value={prompt} onChange={setPrompt} onError={setError} /><button className="generate-button" disabled={generating}>{generating ? <><LoaderCircle className="spin" size={14} /> Planning</> : <>Generate <ArrowUpRight size={14} /></>}</button></div></form>{error && <div className="error-message"><X size={13} />{error}</div>}<div className="pipeline"><span><i /> REASON</span><b>→</b><span><i /> VALIDATE</span><b>→</b><span><i /> VISUALIZE</span></div></section>
       </aside>
     </section>
     <footer className="footer"><span><span className="footer-pulse" /> {isDraft ? 'Waiting for your lesson topic' : isSample ? 'Exploring a sample AnimationPlan' : 'AnimationPlan generated and validated'}</span><span>Educational reasoning <b>→</b> structured plan <b>→</b> visual execution</span></footer>

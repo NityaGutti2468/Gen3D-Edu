@@ -8,13 +8,126 @@ def deterministic_topic_demo(prompt: str) -> AnimationPlan | None:
     normalized = re.sub(r"[^a-z0-9]+", " ", prompt.lower()).strip()
     if "tcp" in normalized and ("handshake" in normalized or "syn" in normalized):
         return tcp_handshake_demo(prompt)
+    if any(word in normalized for word in ("projectile", "trajectory", "launch angle", "launched at")):
+        return projectile_motion_demo(prompt)
     if any(word in normalized for word in ("light", "ray")) and any(word in normalized for word in ("refraction", "refract", "snell")):
         return refraction_demo(prompt)
     if "stack" in normalized and any(word in normalized for word in ("push", "pop", "lifo", "data structure")):
         return stack_demo(prompt)
+    if "gradient descent" in normalized:
+        return gradient_descent_demo(prompt)
     if "binary search" in normalized:
         return binary_search_demo(prompt)
     return generic_sliding_window_demo(prompt)
+
+
+def gradient_descent_demo(prompt: str) -> AnimationPlan | None:
+    """Build a small, parameterized descent over a convex loss curve."""
+    rate_match = re.search(r"\b(?:learning\s+rate|step\s+size|alpha|α|eta|η)\s*(?:is|=|:)?\s*(0?\.\d+|1(?:\.0+)?)", prompt, re.IGNORECASE)
+    learning_rate = float(rate_match.group(1)) if rate_match else 0.1
+    if not 0 < learning_rate <= 0.5:
+        return None
+    start_match = re.search(r"\b(?:initial\s+x|start(?:ing)?\s+x|start(?:ing)?\s+point)\s*(?:is|=|:)?\s*(-?\d+(?:\.\d+)?)", prompt, re.IGNORECASE)
+    x = float(start_match.group(1)) if start_match else -4.0
+    if not -12 <= x <= 12:
+        return None
+    iteration_match = re.search(r"\b(\d+)\s+iterations?\b", prompt, re.IGNORECASE)
+    iteration_count = min(10, max(3, int(iteration_match.group(1)))) if iteration_match else 6
+    minimum_x = 2.0
+
+    def loss(value: float) -> float:
+        return (value - minimum_x) ** 2
+
+    def point_position(value: float) -> dict:
+        return {"x": value, "y": loss(value), "z": 0}
+
+    objects = [
+        {"id": "loss_curve", "type": "chart", "label": "Loss curve", "properties": {"content": "f(x) = (x − 2)²"}},
+        {"id": "estimate", "type": "shape", "label": "Current x", "properties": {"position": point_position(x)}},
+        {"id": "minimum", "type": "shape", "label": "Minimum · x = 2", "properties": {"position": point_position(minimum_x)}},
+    ]
+    steps = [{
+        "step": 1,
+        "title": f"Start at x = {x:.2f}",
+        "explanation": f"We want to minimize f(x) = (x − 2)². Start at x = {x:.2f}; the minimum is at x = 2, where the loss is zero.",
+        "actions": [{"action": "focus", "target": "loss_curve"}, {"action": "focus", "target": "estimate"}],
+    }]
+    for iteration in range(1, iteration_count + 1):
+        gradient = 2 * (x - minimum_x)
+        next_x = x - learning_rate * gradient
+        next_loss = loss(next_x)
+        direction = "right" if next_x > x else "left"
+        steps.append({
+            "step": iteration + 1,
+            "title": f"Update {iteration} · x = {next_x:.2f}",
+            "explanation": f"At x = {x:.2f}, the slope is {gradient:.2f}. Apply x_new = x − α·slope with α = {learning_rate:g}: move {direction} to x = {next_x:.2f}. The loss drops from {loss(x):.2f} to {next_loss:.2f}.",
+            "actions": [
+                {"action": "focus", "target": "loss_curve"},
+                {"action": "move", "target": "estimate", "parameters": {"position": point_position(next_x)}},
+                {"action": "focus", "target": "estimate"},
+            ],
+        })
+        x = next_x
+    steps[-1]["explanation"] += f" After {iteration_count} updates, the estimate is approaching the minimum at x = {minimum_x:.2f}."
+    return AnimationPlan.model_validate({
+        "concept": "Gradient Descent · Minimizing a Loss Curve",
+        "domain": "Machine Learning · Optimization",
+        "learning_objective": "Follow the negative slope to reduce a function’s loss step by step.",
+        "objects": objects,
+        "steps": steps,
+    })
+
+
+def projectile_motion_demo(prompt: str) -> AnimationPlan | None:
+    speed_match = re.search(r"\b(?:initial\s+)?(?:speed|velocity)\s*(?:is|=|:)?\s*(\d+(?:\.\d+)?)", prompt, re.IGNORECASE)
+    angle_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:°|degrees?|deg)(?![a-z])|\bangle\s*(?:is|=|:)?\s*(\d+(?:\.\d+)?)", prompt, re.IGNORECASE)
+    gravity_match = re.search(r"\b(?:gravity|g)\s*(?:is|=|:)?\s*(\d+(?:\.\d+)?)", prompt, re.IGNORECASE)
+    speed = float(speed_match.group(1)) if speed_match else 20.0
+    angle = float(next(value for value in angle_match.groups() if value is not None)) if angle_match else 45.0
+    gravity = float(gravity_match.group(1)) if gravity_match else 9.8
+    if speed <= 0 or speed > 100 or not 1 <= angle <= 89 or gravity <= 0:
+        return None
+    radians = math.radians(angle)
+    vx, vy = speed * math.cos(radians), speed * math.sin(radians)
+    flight_time = 2 * vy / gravity
+    horizontal_range = vx * flight_time
+    apex_height = vy**2 / (2 * gravity)
+    metadata = f"{speed:.4f}|{angle:.4f}|{gravity:.4f}|{flight_time:.4f}|{horizontal_range:.4f}|{apex_height:.4f}"
+
+    def position(time: float) -> dict:
+        return {"x": vx * time, "y": max(0, vy * time - 0.5 * gravity * time**2), "z": 0}
+
+    frame_count = 6
+    objects = [
+        {"id": "flight_path", "type": "chart", "label": "Projectile trajectory", "properties": {"content": metadata}},
+        {"id": "projectile", "type": "shape", "label": "Projectile", "properties": {"position": position(0)}},
+    ]
+    steps = [{
+        "step": 1,
+        "title": "Launch components",
+        "explanation": f"Launch at {speed:g} m/s and {angle:g}° above the ground. The horizontal speed is {vx:.2f} m/s and the initial vertical speed is {vy:.2f} m/s.",
+        "actions": [{"action": "focus", "target": "flight_path"}, {"action": "focus", "target": "projectile"}],
+    }]
+    for frame in range(1, frame_count + 1):
+        time = flight_time * frame / frame_count
+        p = position(time)
+        if frame == frame_count:
+            explanation = f"At {time:.2f} s, the projectile returns to ground level after traveling {horizontal_range:.2f} m horizontally. Its trajectory is parabolic because horizontal velocity stays constant while gravity accelerates it downward."
+        else:
+            explanation = f"At t = {time:.2f} s, x = vₓt = {p['x']:.2f} m and y = vᵧt − ½gt² = {p['y']:.2f} m. Horizontal motion is steady while gravity slows the rise, then speeds the fall."
+        steps.append({
+            "step": frame + 1,
+            "title": f"Flight · t = {time:.2f} s",
+            "explanation": explanation,
+            "actions": [{"action": "move", "target": "projectile", "parameters": {"position": p}}, {"action": "focus", "target": "projectile"}],
+        })
+    return AnimationPlan.model_validate({
+        "concept": "Projectile Motion · Trajectory Under Gravity",
+        "domain": "Physics · Mechanics",
+        "learning_objective": "See how horizontal velocity and vertical acceleration combine to create a projectile’s parabolic path.",
+        "objects": objects,
+        "steps": steps,
+    })
 
 
 def _integer_array(prompt: str, default: list[int]) -> list[int]:

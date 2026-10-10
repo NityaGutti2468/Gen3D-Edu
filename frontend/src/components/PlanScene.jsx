@@ -73,17 +73,114 @@ function arrayView(objects, ranges, selectedIndices, stepIndex) {
   })}</div><div className="scene-caption">{array?.label || 'Array'} <span>·</span> {values.length} values</div></div>;
 }
 
-function genericView(objects, currentActions, stepIndex) {
+function gradientDescentView(plan, objects, stepIndex) {
+  const initial = plan.objects.find((object) => object.id === 'estimate')?.properties.position;
+  const current = objects.find((object) => object.id === 'estimate')?.properties.position;
+  const minimum = plan.objects.find((object) => object.id === 'minimum')?.properties.position;
+  if (!initial || !current || !minimum) return null;
+  const loss = (x) => (x - minimum.x) ** 2;
+  const xMin = Math.min(initial.x, minimum.x) - 1;
+  const xMax = Math.max(initial.x, minimum.x) + 1;
+  const yMax = Math.max(loss(xMin), loss(xMax), 1);
+  const point = (x) => ({ x: 12 + ((x - xMin) / (xMax - xMin)) * 76, y: 77 - (loss(x) / yMax) * 60 });
+  const curve = Array.from({ length: 61 }, (_, index) => point(xMin + (xMax - xMin) * index / 60));
+  const history = [initial];
+  plan.steps.slice(0, stepIndex + 1).forEach((step) => step.actions.forEach((action) => {
+    if (action.action === 'move' && action.target === 'estimate' && action.parameters.position) history.push(action.parameters.position);
+  }));
+  const trail = history.map(({ x }) => point(x));
+  const next = plan.steps.slice(stepIndex + 1).flatMap((step) => step.actions).find((action) => action.action === 'move' && action.target === 'estimate')?.parameters.position;
+  const currentPoint = point(current.x), minimumPoint = point(minimum.x), nextPoint = next ? point(next.x) : null;
+  const equation = plan.objects.find((object) => object.id === 'loss_curve')?.properties.content || 'Loss curve';
+  return <div className="gradient-descent-view">
+    <div className="gradient-view-heading"><div><span>OPTIMIZATION PATH</span><strong>{equation}</strong></div><div className="gradient-rate">STEP {String(stepIndex).padStart(2, '0')}</div></div>
+    <svg viewBox="0 0 100 100" role="img" aria-label="Gradient descent estimate moving downhill toward the minimum">
+      <defs><marker id="gradient-arrow" markerWidth="4" markerHeight="4" refX="3.5" refY="2" orient="auto"><path d="M0,0 L4,2 L0,4 z" /></marker></defs>
+      {[22, 40, 58, 76].map((y) => <line key={`grid-${y}`} className="descent-gridline" x1="12" y1={y} x2="89" y2={y} />)}
+      <line className="descent-axis" x1="12" y1="78" x2="90" y2="78" /><line className="descent-axis" x1="12" y1="14" x2="12" y2="78" />
+      <path className="descent-curve" d={curve.map((p, index) => `${index ? 'L' : 'M'} ${p.x} ${p.y}`).join(' ')} />
+      <line className="descent-minimum-line" x1={minimumPoint.x} y1={minimumPoint.y} x2={minimumPoint.x} y2="78" />
+      {trail.length > 1 && <polyline className="descent-trail" points={trail.map((p) => `${p.x},${p.y}`).join(' ')} />}
+      {trail.map((p, index) => <circle key={`trail-${index}`} className="descent-history-point" cx={p.x} cy={p.y} r="1.15" />)}
+      {nextPoint && <line className="descent-update-arrow" x1={currentPoint.x} y1={currentPoint.y} x2={nextPoint.x} y2={nextPoint.y} markerEnd="url(#gradient-arrow)" />}
+      <circle className="descent-minimum" cx={minimumPoint.x} cy={minimumPoint.y} r="2.3" />
+      <circle className="descent-current" cx={currentPoint.x} cy={currentPoint.y} r="2.8" />
+      <text className="descent-label" x="13" y="89">x · parameter</text><text className="descent-label" x={Math.min(82, minimumPoint.x + 2)} y="74">MINIMUM</text>
+      <text className="descent-point-label" x={Math.min(80, currentPoint.x + 3)} y={Math.max(13, currentPoint.y - 4)}>x = {current.x.toFixed(2)}</text>
+    </svg>
+    <div className="gradient-view-footer"><span>● Estimate</span><span>○ Minimum</span><span>Arrow shows the next update</span></div>
+  </div>;
+}
+
+function physicsChartView(values, selectedIndices, stepIndex) {
+  const numbers = values.map(Number);
+  if (numbers.length < 2 || numbers.some((value) => !Number.isFinite(value))) return null;
+  const min = Math.min(0, ...numbers), max = Math.max(...numbers), span = max - min || 1;
+  const points = numbers.map((value, index) => ({ x: 12 + index * 76 / (numbers.length - 1), y: 76 - ((value - min) / span) * 58 }));
+  const active = [...selectedIndices].find((index) => index >= 0 && index < points.length);
+  return <div className="physics-chart-view"><svg key={stepIndex} viewBox="0 0 100 100" role="img" aria-label="Physics values plotted as a changing curve">
+    {[18, 37, 56, 76].map((y) => <line key={y} className="descent-gridline" x1="11" y1={y} x2="90" y2={y} />)}
+    <line className="descent-axis" x1="11" y1="77" x2="91" y2="77" /><line className="descent-axis" x1="11" y1="14" x2="11" y2="77" />
+    <polyline className="physics-curve" points={points.map((point) => `${point.x},${point.y}`).join(' ')} />
+    {points.map((point, index) => <circle key={index} className={`physics-plot-point ${index === active ? 'active' : ''}`} cx={point.x} cy={point.y} r={index === active ? '2.4' : '1.5'}><title>{values[index]}</title></circle>)}
+    <text className="descent-label" x="13" y="90">TIME / POSITION / VALUE</text>
+  </svg></div>;
+}
+
+function projectileMotionView(plan, objects, stepIndex) {
+  const metadata = plan.objects.find((object) => object.id === 'flight_path')?.properties.content?.split('|').map(Number);
+  const current = objects.find((object) => object.id === 'projectile')?.properties.position;
+  if (!metadata || metadata.length < 6 || metadata.some((value) => !Number.isFinite(value)) || !current) return null;
+  const [speed, angle, gravity, flightTime, horizontalRange, apexHeight] = metadata;
+  const position = (time) => ({ x: speed * Math.cos(angle * Math.PI / 180) * time, y: speed * Math.sin(angle * Math.PI / 180) * time - .5 * gravity * time * time });
+  const mapPoint = ({ x, y }) => ({ x: 10 + x / horizontalRange * 80, y: 78 - y / apexHeight * 55 });
+  const trajectory = Array.from({ length: 61 }, (_, index) => mapPoint(position(flightTime * index / 60)));
+  const history = [plan.objects.find((object) => object.id === 'projectile').properties.position];
+  plan.steps.slice(0, stepIndex + 1).forEach((step) => step.actions.forEach((action) => {
+    if (action.action === 'move' && action.target === 'projectile' && action.parameters.position) history.push(action.parameters.position);
+  }));
+  const trail = history.map(mapPoint);
+  const now = mapPoint(current);
+  const next = plan.steps.slice(stepIndex + 1).flatMap((step) => step.actions).find((action) => action.action === 'move' && action.target === 'projectile')?.parameters.position;
+  const nextPoint = next ? mapPoint(next) : null;
+  const apex = mapPoint({ x: horizontalRange / 2, y: apexHeight });
+  return <div className="physics-motion-view">
+    <div className="physics-motion-heading"><div><span>PROJECTILE MOTION</span><strong>{speed.toFixed(1)} m/s · {angle.toFixed(1)}° launch</strong></div><span>g = {gravity.toFixed(1)} m/s²</span></div>
+    <svg viewBox="0 0 100 100" role="img" aria-label="Projectile moving along a parabolic trajectory under gravity">
+      <defs><marker id="projectile-arrow" markerWidth="4" markerHeight="4" refX="3.5" refY="2" orient="auto"><path d="M0,0 L4,2 L0,4 z" /></marker></defs>
+      {[22, 40, 58, 78].map((y) => <line key={y} className="descent-gridline" x1="10" y1={y} x2="91" y2={y} />)}
+      <line className="descent-axis" x1="9" y1="79" x2="92" y2="79" /><line className="descent-axis" x1="10" y1="14" x2="10" y2="80" />
+      <path className="projectile-trajectory" d={trajectory.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' ')} />
+      {trail.length > 1 && <polyline className="projectile-trail" points={trail.map((point) => `${point.x},${point.y}`).join(' ')} />}
+      <line className="projectile-apex-line" x1={apex.x} y1={apex.y} x2={apex.x} y2="79" />
+      <circle className="projectile-apex" cx={apex.x} cy={apex.y} r="1.8" />
+      {nextPoint && <line className="projectile-direction" x1={now.x} y1={now.y} x2={nextPoint.x} y2={nextPoint.y} markerEnd="url(#projectile-arrow)" />}
+      <circle className="projectile-current" cx={now.x} cy={now.y} r="2.7" />
+      <text className="descent-label" x="12" y="90">HORIZONTAL DISTANCE</text><text className="physics-apex-label" x={Math.min(77, apex.x + 2)} y={Math.max(13, apex.y - 2)}>APEX</text>
+      <text className="physics-coordinate-label" x={Math.min(75, now.x + 3)} y={Math.max(13, now.y - 3)}>({current.x.toFixed(1)}, {current.y.toFixed(1)}) m</text>
+    </svg>
+    <div className="physics-motion-footer"><span>━ Full trajectory</span><span>● Current position</span><span>Range {horizontalRange.toFixed(1)} m</span></div>
+  </div>;
+}
+
+function genericView(objects, currentActions, stepIndex, plan, selectedIndices) {
   const visible = objects.filter((object) => object.type !== 'edge');
   const positioned = visible.map((object, index) => ({ object, index }));
   const nodeObjects = visible.filter((object) => ['node', 'shape'].includes(object.type));
   const edgeObjects = objects.filter((object) => object.type === 'edge');
   const hasGraph = nodeObjects.length > 1 || edgeObjects.length > 0;
   const values = objects.find((object) => object.type === 'chart')?.properties.values;
-  if (values?.length) return <div className="chart-view" key={stepIndex}>{values.map((value, index) => {
+  if (values?.length) {
+    const isPhysics = /physics|mechanics|kinematics|electromagnetism/i.test(plan.domain);
+    if (isPhysics) {
+      const lineChart = physicsChartView(values, selectedIndices, stepIndex);
+      if (lineChart) return lineChart;
+    }
+    return <div className="chart-view" key={stepIndex}>{values.map((value, index) => {
     const number = Number(value); const height = Number.isFinite(number) ? Math.max(10, Math.min(92, Math.abs(number) * 5)) : 35 + ((index * 17) % 48);
     return <div className="chart-column" key={`${index}-${value}-${stepIndex}`} style={{ '--col-index': index }}><span className="chart-value">{value}</span><i style={{ height: `${height}%` }} /><small>{index + 1}</small></div>;
-  })}</div>;
+    })}</div>;
+  }
   if (hasGraph) {
     const coords = new Map();
     const suppliedX = nodeObjects.map((object) => object.properties.position?.x).filter((value) => value !== undefined);
@@ -167,8 +264,12 @@ export default function PlanScene({ plan, stepIndex }) {
   const scene = useMemo(() => buildScene(plan, stepIndex), [plan, stepIndex]);
   const array = arrayView(scene.objects, scene.arrayRanges, scene.selectedIndices, stepIndex);
   const concept = plan.concept.toLowerCase();
-  const specialView = concept.includes('refraction') || concept.includes('refract')
-    ? refractionView(plan, stepIndex)
-    : concept.includes('stack') ? stackView(scene.objects, stepIndex) : null;
-  return <div className="scene-content"><div className="scene-callout callout-left">{scene.objects.length} PLAN OBJECT{scene.objects.length === 1 ? '' : 'S'}</div><div className="scene-callout callout-right">{plan.domain}</div><div className="generic-board">{specialView || array || genericView(scene.objects, scene.currentActions, stepIndex)}</div></div>;
+  const specialView = concept.includes('projectile motion')
+    ? projectileMotionView(plan, scene.objects, stepIndex)
+    : concept.includes('gradient descent')
+    ? gradientDescentView(plan, scene.objects, stepIndex)
+    : concept.includes('refraction') || concept.includes('refract')
+      ? refractionView(plan, stepIndex)
+      : concept.includes('stack') ? stackView(scene.objects, stepIndex) : null;
+  return <div className="scene-content"><div className="scene-callout callout-left">{scene.objects.length} PLAN OBJECT{scene.objects.length === 1 ? '' : 'S'}</div><div className="scene-callout callout-right">{plan.domain}</div><div className="generic-board">{specialView || array || genericView(scene.objects, scene.currentActions, stepIndex, plan, scene.selectedIndices)}</div></div>;
 }

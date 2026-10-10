@@ -44,6 +44,18 @@ export function getSavedLesson(id) {
   return authRequest(`/api/lessons/${encodeURIComponent(id)}`);
 }
 
+export function setLessonPinned(id, isPinned) {
+  return authRequest(`/api/lessons/${encodeURIComponent(id)}/pin`, {
+    method: 'PATCH', body: JSON.stringify({ is_pinned: isPinned }),
+  });
+}
+
+export function deleteSavedLessons(lessonIds) {
+  return authRequest('/api/lessons/bulk-delete', {
+    method: 'POST', body: JSON.stringify({ lesson_ids: lessonIds }),
+  });
+}
+
 export async function getHealth() {
   const response = await fetch('/api/health');
   if (!response.ok) throw new Error('API unavailable');

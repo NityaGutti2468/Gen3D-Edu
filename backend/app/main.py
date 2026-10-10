@@ -6,9 +6,9 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database import create_user, get_lesson, get_user_by_email, list_lessons, save_lesson
+from app.database import create_user, delete_lessons, get_lesson, get_user_by_email, list_lessons, save_lesson, set_lesson_pinned
 from app.schemas.animation import GenerateRequest, GenerateResponse, ValidationResult
-from app.schemas.auth import AuthResponse, LessonResponse, LessonSummary, LoginRequest, SignupRequest, UserResponse
+from app.schemas.auth import AuthResponse, DeleteLessonsRequest, LessonResponse, LessonSummary, LoginRequest, PinLessonRequest, SignupRequest, UserResponse
 from app.services.auth_service import SESSION_COOKIE, SESSION_SECONDS, create_session, get_session_user, hash_password, verify_password
 from app.services.animation_service import generate_valid_plan
 from app.services.llm_service import LLMGenerationError, LLMUnavailable
@@ -90,6 +90,20 @@ def saved_lesson(lesson_id: str, user: dict = Depends(require_user)):
     if not lesson:
         raise HTTPException(status_code=404, detail="Lesson not found.")
     return lesson
+
+
+@app.patch("/api/lessons/{lesson_id}/pin", response_model=LessonSummary)
+def pin_lesson(lesson_id: str, data: PinLessonRequest, user: dict = Depends(require_user)):
+    if not set_lesson_pinned(user["id"], lesson_id, data.is_pinned):
+        raise HTTPException(status_code=404, detail="Lesson not found.")
+    lesson = next((item for item in list_lessons(user["id"]) if item["id"] == lesson_id), None)
+    return lesson
+
+
+@app.post("/api/lessons/bulk-delete")
+def remove_lessons(data: DeleteLessonsRequest, user: dict = Depends(require_user)):
+    deleted_count = delete_lessons(user["id"], data.lesson_ids)
+    return {"deleted_count": deleted_count}
 
 
 @app.post("/api/generate", response_model=GenerateResponse)

@@ -35,11 +35,15 @@ def init_db() -> None:
                 concept TEXT NOT NULL,
                 domain TEXT NOT NULL,
                 plan_json TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                is_pinned INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_lessons_user_created
                 ON lessons(user_id, created_at DESC);
         """)
+        lesson_columns = {row["name"] for row in connection.execute("PRAGMA table_info(lessons)")}
+        if "is_pinned" not in lesson_columns:
+            connection.execute("ALTER TABLE lessons ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0")
         connection.commit()
     finally:
         connection.close()
@@ -86,14 +90,14 @@ def save_lesson(user_id: int, prompt: str, plan: AnimationPlan) -> dict:
         connection.commit()
     finally:
         connection.close()
-    return {"id": lesson_id, "concept": plan.concept, "domain": plan.domain, "created_at": created_at}
+    return {"id": lesson_id, "concept": plan.concept, "domain": plan.domain, "created_at": created_at, "is_pinned": False}
 
 
 def list_lessons(user_id: int) -> list[dict]:
     connection = connect_db()
     try:
         rows = connection.execute(
-            "SELECT id, concept, domain, created_at FROM lessons WHERE user_id = ? ORDER BY created_at DESC",
+            "SELECT id, concept, domain, created_at, is_pinned FROM lessons WHERE user_id = ? ORDER BY is_pinned DESC, created_at DESC",
             (user_id,),
         ).fetchall()
         return [dict(row) for row in rows]
@@ -105,7 +109,7 @@ def get_lesson(user_id: int, lesson_id: str) -> dict | None:
     connection = connect_db()
     try:
         row = connection.execute(
-            "SELECT id, prompt, concept, domain, plan_json, created_at FROM lessons WHERE id = ? AND user_id = ?",
+            "SELECT id, prompt, concept, domain, plan_json, created_at, is_pinned FROM lessons WHERE id = ? AND user_id = ?",
             (lesson_id, user_id),
         ).fetchone()
         if not row:
@@ -113,6 +117,36 @@ def get_lesson(user_id: int, lesson_id: str) -> dict | None:
         result = dict(row)
         result["plan"] = json.loads(result.pop("plan_json"))
         return result
+    finally:
+        connection.close()
+
+
+def set_lesson_pinned(user_id: int, lesson_id: str, is_pinned: bool) -> bool:
+    connection = connect_db()
+    try:
+        cursor = connection.execute(
+            "UPDATE lessons SET is_pinned = ? WHERE id = ? AND user_id = ?",
+            (int(is_pinned), lesson_id, user_id),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
+    finally:
+        connection.close()
+
+
+def delete_lessons(user_id: int, lesson_ids: list[str]) -> int:
+    unique_ids = list(dict.fromkeys(lesson_ids))
+    if not unique_ids:
+        return 0
+    placeholders = ",".join("?" for _ in unique_ids)
+    connection = connect_db()
+    try:
+        cursor = connection.execute(
+            f"DELETE FROM lessons WHERE user_id = ? AND id IN ({placeholders})",
+            [user_id, *unique_ids],
+        )
+        connection.commit()
+        return cursor.rowcount
     finally:
         connection.close()
 

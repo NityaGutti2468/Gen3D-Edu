@@ -56,6 +56,15 @@ class LessonSummary(BaseModel):
     concept: str
     domain: str
     created_at: str
+    is_pinned: bool = False
+
+
+class PinLessonRequest(BaseModel):
+    is_pinned: bool
+
+
+class DeleteLessonsRequest(BaseModel):
+    lesson_ids: list[str] = Field(min_length=1, max_length=100)
 
 
 class LessonResponse(BaseModel):
@@ -64,4 +73,5 @@ class LessonResponse(BaseModel):
     concept: str
     domain: str
     created_at: str
+    is_pinned: bool = False
     plan: AnimationPlan

@@ -1,0 +1,41 @@
+.playback-options{position:absolute;right:19px;display:flex;align-items:center;gap:10px}
+.playback-options .speed-control{position:static;margin:0}
+.view-mode-control{display:flex;align-items:center;padding:3px;border:1px solid #354151;border-radius:7px;background:#111925}
+.view-mode-control button{min-width:31px;padding:5px 7px;border:0;border-radius:5px;background:transparent;color:#8d9bb0;font:9px 'DM Mono';cursor:pointer;transition:background .18s ease,color .18s ease}
+.view-mode-control button:hover{color:#e5edfa}
+.view-mode-control button.active{background:#27396a;color:#c4d5ff;box-shadow:0 1px 5px #0004}
+.semantic-3d-board{display:block;width:min(100%,980px);height:390px;min-height:0;padding:0;overflow:hidden;background:#0b1220;border-color:#3e4b79}
+.semantic-3d-board:after{display:none}
+.semantic-3d-stage{position:relative;width:100%;height:100%;min-height:300px;overflow:hidden;border-radius:12px}
+.semantic-3d-stage canvas{display:block;width:100%;height:100%}
+.semantic-3d-caption{position:absolute;z-index:2;top:14px;left:16px;right:16px;display:flex;justify-content:space-between;gap:10px;color:#aebdd4;font:9px 'DM Mono';letter-spacing:.08em;pointer-events:none}
+.scene3d-label{display:block;width:max-content;min-width:72px;max-width:220px;box-sizing:border-box;padding:6px 9px;border:1px solid #526a9a;border-radius:7px;background:#111a2bea;color:#eaf1ff;font:500 11px 'DM Sans',sans-serif;text-align:center;line-height:1.35;box-shadow:0 5px 20px #0005;white-space:normal;word-break:normal;overflow-wrap:break-word;pointer-events:none}
+.scene3d-label.highlighted{border-color:#9fbaff;background:#263d75f0;color:#fff;box-shadow:0 0 18px #739bff66}
+.scene3d-array-caption{position:static;display:block;width:max-content;max-width:none;white-space:nowrap;overflow-wrap:normal;color:#aabbd6;font:9px 'DM Mono';letter-spacing:.06em}
+.scene3d-pointer-label{min-width:52px;white-space:nowrap;overflow-wrap:normal}
+.scene3d-array-value{display:grid;place-items:center;min-width:52px;height:38px;color:#fff;font:700 18px 'DM Mono';text-shadow:0 2px 10px #101632}
+.scene3d-index{color:#a9b8d0;font:10px 'DM Mono';text-shadow:0 1px 5px #000}
+html[data-theme="light"] .view-mode-control{background:#f2f5fb;border-color:#d5deeb}
+html[data-theme="light"] .view-mode-control button{color:#66758d}
+html[data-theme="light"] .view-mode-control button:hover{color:#24334b}
+html[data-theme="light"] .view-mode-control button.active{background:#dfe8ff;color:#355db4}
+html[data-theme="light"] .semantic-3d-board{background:#10182a}
+@media(max-width:720px){
+  .playback-options{position:static;margin-left:auto;gap:7px}
+  .playback-options .speed-control{position:static;margin:0}
+  .view-mode-control button{min-width:27px;padding:5px}
+  .semantic-3d-board{height:330px}
+  .semantic-3d-caption{top:10px;left:11px;right:11px}
+}
+.bernoulli-3d-board{height:430px}
+.bernoulli-gauge{display:grid;gap:3px;min-width:112px;max-width:none;white-space:nowrap;overflow-wrap:normal}
+.bernoulli-gauge strong{font:600 9px 'DM Mono';letter-spacing:.04em}
+.bernoulli-gauge span{color:#9bb7dc;font:8px 'DM Mono';letter-spacing:.03em}
+.bernoulli-speed-label{padding:4px 7px;border:1px solid #354d70;border-radius:5px;background:#101a2ad9;color:#c9def4;font:8px 'DM Mono';letter-spacing:.06em;white-space:nowrap}
+.bernoulli-equation{padding:6px 10px;border:1px solid #49638d;border-radius:7px;background:#101a2af0;color:#e6eeff;font:11px 'DM Mono';white-space:nowrap}
+.bernoulli-equation span{color:#91a6c2;font-size:9px}
+@media(max-width:720px){.bernoulli-3d-board{height:380px}.bernoulli-gauge{min-width:94px}.bernoulli-equation{font-size:9px}}
+.scene3d-queue-empty{min-width:70px;padding:6px 8px;border:1px dashed #72829b;border-radius:5px;color:#9ba9bc;background:#101827c9;font:9px 'DM Mono';letter-spacing:.08em;text-align:center;white-space:nowrap}
+.scene3d-queue-value{display:grid;place-items:center;min-width:54px;color:#f3f7ff;font:700 17px 'DM Mono';text-shadow:0 2px 8px #050914}
+.scene3d-queue-marker{padding:4px 7px;border:1px solid #66CFA5;border-radius:5px;background:#10271f;color:#88E5BD;font:9px 'DM Mono';letter-spacing:.08em;white-space:nowrap}
+.scene3d-queue-marker.rear{border-color:#E8A85C;background:#291d12;color:#FFD08D}

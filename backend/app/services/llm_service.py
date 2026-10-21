@@ -12,7 +12,7 @@ from app.schemas.gemini_output import build_gemini_schema
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_INSTRUCTION = """You are an educational animation planner for a broad range of subjects. Return only an AnimationPlan matching the JSON schema, with 3–8 clear teaching steps. First identify what the learner should understand, then select visual objects that naturally fit the topic. Use arrays and pointers only for array-like ideas; use nodes and edges for relationships or processes; use equations and shapes for mathematics and physics; use charts for quantities and comparisons; use labelled shapes, nodes, and concise text for biology, chemistry, geography, history, language, and other subjects. For sliding-window algorithm lessons, show one fixed array with 7–9 values, not a four-item toy array. Create distinct left/start and right/end pointer objects initialized to the correct indices. In every step, highlight the current window using range_start and range_end; when it slides, move the pointers with the new index values so the visible boundaries advance. Explain the current window contents and update the running sum/count when relevant. Do not repeat the same range and pointer positions across steps unless the algorithm truly holds them. Keep array indices zero-based and within bounds. For computer networking lessons, build a clear packet journey: use a small set of device nodes (such as client, switch/router, and server) arranged in communication order; represent each important transmission as a directed edge whose label names the actual packet/message (for example SYN, SYN-ACK, ACK, DNS query, or Ethernet frame). Add only a few short notes for essential details such as ports or layer changes. Never create separate duplicate labels for devices or packets. Each step should focus on one event, highlight its relevant edge/device, and explain what is sent, where it goes, and why. Keep diagram labels concise and specific, avoid overlapping or decorative filler, and make the visual agree with the explanation. Each step must explain the idea and include actions that visibly advance it. Prefer several small, meaningful objects over one large block of text. Use only supported semantic object types and actions. Never output code or renderer instructions. Every target and object endpoint must reference an existing object ID. Keep all array indices and ranges in bounds. For a question outside an academic subject, provide a concise explanatory lesson using text, label, and shape objects rather than refusing."""
+SYSTEM_INSTRUCTION = """You are an educational animation planner for a broad range of subjects. Return only an AnimationPlan matching the JSON schema, with 3–8 clear teaching steps. First identify what the learner should understand, then select visual objects that naturally fit the topic. Use arrays and pointers only for array-like ideas; use nodes and edges for relationships or processes; use equations and shapes for mathematics and physics; use charts for quantities and comparisons; use labelled shapes, nodes, and concise text for biology, chemistry, geography, history, language, and other subjects. Always set render_mode to 3d for every topic so every generated lesson opens as an interactive 3D scene; the learner can switch to the 2D view in the player controls. Specify scene.camera_position and scene.camera_target for every plan. Give every visual object its existing concise human-readable label plus a supported geometry enum, position, rotation in degrees, positive scale, and structured material (color, roughness, metalness, opacity). Positions use world coordinates; scale values are positive multipliers. Give 3D edges geometry=line, valid source_id/target_id endpoints, and the same explicit transform/material fields. Each step action mutates only the named object's structured state: move replaces position, rotate replaces rotation in degrees, scale replaces scale, set_geometry replaces the geometry enum, and set_material replaces the material object; create/show and remove/hide control visibility. Provide the full values needed by each action. Never emit shader code, scripts, expressions, or arbitrary Blender code. For sliding-window algorithm lessons, show one fixed array with 7–9 values, not a four-item toy array. Create distinct left/start and right/end pointer objects initialized to the correct indices. In every step, highlight the current window using range_start and range_end; when it slides, move the pointers with the new index values so the visible boundaries advance. Explain the current window contents and update the running sum/count when relevant. Do not repeat the same range and pointer positions across steps unless the algorithm truly holds them. Keep array indices zero-based and within bounds. For computer networking lessons, build a clear packet journey: use a small set of device nodes (such as client, switch/router, and server) arranged in communication order; represent each important transmission as a directed edge whose label names the actual packet/message (for example SYN, SYN-ACK, ACK, DNS query, or Ethernet frame). Add only a few short notes for essential details such as ports or layer changes. Never create separate duplicate labels for devices or packets. Each step should focus on one event, highlight its relevant edge/device, and explain what is sent, where it goes, and why. Keep diagram labels concise and specific, avoid overlapping or decorative filler, and make the visual agree with the explanation. Each step must explain the idea and include actions that visibly advance it. Prefer several small, meaningful objects over one large block of text. Use only supported semantic object types and actions. Every target and object endpoint must reference an existing object ID. Keep all array indices and ranges in bounds. For a question outside an academic subject, provide a concise explanatory lesson using text, label, and shape objects rather than refusing."""
 
 
 class LLMUnavailable(Exception):
@@ -28,17 +28,34 @@ class GeminiPlanService:
         key = os.getenv("GEMINI_API_KEY", "").strip()
         if not key or key == "replace_with_your_key":
             raise LLMUnavailable("Gemini is not configured. Add GEMINI_API_KEY to backend/.env and restart the API.")
-        self.client = genai.Client(api_key=key)
-        self.model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+        # Bound each provider call and disable the SDK's multi-minute retry
+        # backoff. The service owns a single end-to-end budget across fallbacks.
+        request_timeout_ms = int(os.getenv("GEMINI_REQUEST_TIMEOUT_MS", "20000"))
+        self.client = genai.Client(
+            api_key=key,
+            http_options=types.HttpOptions(
+                timeout=request_timeout_ms,
+                retry_options=types.HttpRetryOptions(attempts=1),
+            ),
+        )
+        self.model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
         fallback_models = os.getenv("GEMINI_FALLBACK_MODELS", "")
         if fallback_models.strip():
             self.fallback_models = [model.strip() for model in fallback_models.split(",") if model.strip()]
         else:
-            legacy_fallback = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.8-flash,gemini-3.6-flash,gemini-2.5-flash")
+            legacy_fallback = os.getenv(
+                "GEMINI_FALLBACK_MODEL",
+                "gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite",
+            )
             self.fallback_models = [model.strip() for model in legacy_fallback.split(",") if model.strip()]
         logger.info("Gemini model order: %s", " -> ".join(dict.fromkeys([self.model, *self.fallback_models])))
 
-    def generate(self, prompt: str, correction_context: str | None = None) -> AnimationPlan:
+    def generate(
+        self,
+        prompt: str,
+        correction_context: str | None = None,
+        deadline: float | None = None,
+    ) -> AnimationPlan:
         contents = prompt
         if correction_context:
             contents += "\n\nCorrect this invalid plan, preserve educational intent, and fix every validator error. Return only the corrected AnimationPlan:\n" + correction_context
@@ -46,6 +63,11 @@ class GeminiPlanService:
             response = None
             model_candidates = list(dict.fromkeys([self.model, *self.fallback_models]))
             for index, model in enumerate(model_candidates):
+                remaining_ms = int((deadline - time.monotonic()) * 1000) if deadline is not None else None
+                if remaining_ms is not None and remaining_ms <= 0:
+                    raise LLMGenerationError(
+                        "Lesson generation reached its 60-second time limit. Try again, or use a shorter, more specific prompt."
+                    )
                 try:
                     logger.info("Requesting Gemini model %s", model)
                     response = self.client.models.generate_content(
@@ -60,13 +82,48 @@ class GeminiPlanService:
                     break
                 except Exception as exc:
                     detail = str(exc)
-                    unavailable = getattr(exc, "code", None) == 503 or "UNAVAILABLE" in detail
-                    if unavailable and index + 1 < len(model_candidates):
-                        logger.warning("Gemini model %s is unavailable; retrying with fallback %s", model, model_candidates[index + 1])
-                        time.sleep(1)
+                    error_code = getattr(exc, "code", None)
+                    unavailable = (
+                        error_code in (404, 503)
+                        or "NOT_FOUND" in detail
+                        or "UNAVAILABLE" in detail
+                    )
+                    transient_network = (
+                        type(exc).__name__ in {
+                            "RemoteProtocolError",
+                            "ConnectError",
+                            "ReadError",
+                            "WriteError",
+                            "PoolTimeout",
+                            "ConnectTimeout",
+                            "ReadTimeout",
+                            "WriteTimeout",
+                            "TimeoutException",
+                        }
+                        or "server disconnected without sending a response" in detail.lower()
+                    )
+                    if (unavailable or transient_network) and index + 1 < len(model_candidates):
+                        reason = "temporarily unavailable" if unavailable else "connection interrupted"
+                        logger.warning(
+                            "Gemini model %s request %s (provider code %s); retrying with %s",
+                            model,
+                            reason,
+                            error_code or "unknown",
+                            model_candidates[index + 1],
+                        )
+                        if deadline is None or deadline - time.monotonic() > 1:
+                            time.sleep(1)
                         continue
                     if unavailable:
-                        raise LLMGenerationError("Gemini models are temporarily at capacity. Wait a minute and submit the prompt again.") from exc
+                        raise LLMGenerationError(
+                            "None of the configured Gemini models is currently available to this API key. "
+                            "Check backend/.env and use model IDs listed for your key in Google AI Studio."
+                        ) from exc
+                    if transient_network:
+                        raise LLMGenerationError(
+                            "The connection to Gemini was interrupted while generating this lesson. "
+                            "Check your internet connection and submit the prompt again."
+                        ) from exc
                     raise
             if not response.text:
                 block_reason = getattr(getattr(response, "prompt_feedback", None), "block_reason", None)

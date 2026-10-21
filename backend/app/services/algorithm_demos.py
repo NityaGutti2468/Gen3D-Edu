@@ -99,8 +99,49 @@ def projectile_motion_demo(prompt: str) -> AnimationPlan | None:
 
     frame_count = 6
     objects = [
-        {"id": "flight_path", "type": "chart", "label": "Projectile trajectory", "properties": {"content": metadata}},
-        {"id": "projectile", "type": "shape", "label": "Projectile", "properties": {"position": position(0)}},
+        {
+            "id": "flight_path", "type": "shape", "label": "Projectile trajectory",
+            "properties": {
+                "geometry": "line", "material": {"color": "#77DDF5", "roughness": 0.55, "metalness": 0.05, "opacity": 1},
+                "position": {"x": 0, "y": 0, "z": 0}, "rotation": {"x": 0, "y": 0, "z": 0}, "scale": {"x": 1, "y": 1, "z": 1},
+                "content": metadata,
+            },
+        },
+        {
+            "id": "projectile", "type": "shape", "label": "Projectile",
+            "properties": {
+                "geometry": "sphere", "material": {"color": "#FFC66D", "roughness": 0.32, "metalness": 0.08, "opacity": 1},
+                "position": position(0), "rotation": {"x": 0, "y": 0, "z": 0}, "scale": {"x": 1, "y": 1, "z": 1},
+            },
+        },
+        {
+            "id": "ground", "type": "shape", "label": "Ground plane",
+            "properties": {
+                "geometry": "plane", "material": {"color": "#0E1726", "roughness": 0.92, "metalness": 0, "opacity": 1},
+                "position": {"x": 500, "y": 0, "z": 0}, "rotation": {"x": 0, "y": 0, "z": 0}, "scale": {"x": 1, "y": 1, "z": 1},
+            },
+        },
+        {
+            "id": "launch_platform", "type": "shape", "label": "Launch platform",
+            "properties": {
+                "geometry": "box", "material": {"color": "#294978", "roughness": 0.48, "metalness": 0.24, "opacity": 1},
+                "position": {"x": -1.8, "y": 0.06, "z": 0}, "rotation": {"x": 0, "y": 0, "z": 0}, "scale": {"x": 1, "y": 1, "z": 1},
+            },
+        },
+        {
+            "id": "launch_post", "type": "shape", "label": "Launcher support",
+            "properties": {
+                "geometry": "box", "material": {"color": "#294978", "roughness": 0.48, "metalness": 0.24, "opacity": 1},
+                "position": {"x": -1.8, "y": 0.48, "z": 0}, "rotation": {"x": 0, "y": 0, "z": 0}, "scale": {"x": 1, "y": 1, "z": 1},
+            },
+        },
+        {
+            "id": "apex_marker", "type": "shape", "label": "Trajectory apex",
+            "properties": {
+                "geometry": "sphere", "material": {"color": "#B5A2FF", "roughness": 0.38, "metalness": 0.02, "opacity": 1},
+                "position": {"x": horizontal_range / 2, "y": apex_height + 0.42, "z": 0}, "rotation": {"x": 0, "y": 0, "z": 0}, "scale": {"x": 0.14, "y": 0.14, "z": 0.14},
+            },
+        },
     ]
     steps = [{
         "step": 1,
@@ -125,6 +166,12 @@ def projectile_motion_demo(prompt: str) -> AnimationPlan | None:
         "concept": "Projectile Motion · Trajectory Under Gravity",
         "domain": "Physics · Mechanics",
         "learning_objective": "See how horizontal velocity and vertical acceleration combine to create a projectile’s parabolic path.",
+        "render_mode": "3d",
+        "scene": {
+            "camera_position": {"x": horizontal_range * 0.52, "y": max(apex_height * 1.45, 5), "z": max(horizontal_range * 1.55, 18)},
+            "camera_target": {"x": horizontal_range / 2, "y": apex_height * 0.42, "z": 0},
+            "background_color": "#0B1220",
+        },
         "objects": objects,
         "steps": steps,
     })

@@ -15,12 +15,27 @@ def _object(properties: dict, required: list[str] | None = None) -> dict:
 
 
 def _vector() -> dict:
-    return _object({"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}})
+    return _object(
+        {"x": {"type": "number"}, "y": {"type": "number"}, "z": {"type": "number"}},
+        ["x", "y", "z"],
+    )
+
+
+def _material() -> dict:
+    return _object({
+        "color": {"type": "string"},
+        "roughness": {"type": "number"},
+        "metalness": {"type": "number"},
+        "opacity": {"type": "number"},
+    })
 
 
 def build_gemini_schema() -> dict:
     vector = _vector()
+    geometry = {"type": "string", "enum": ["box", "sphere", "cylinder", "cone", "plane", "torus", "capsule", "arrow", "line"]}
     object_properties = _object({
+        "geometry": geometry,
+        "material": _material(),
         "position": vector,
         "rotation": vector,
         "scale": vector,
@@ -41,6 +56,8 @@ def build_gemini_schema() -> dict:
         "position": vector,
         "rotation": vector,
         "scale": vector,
+        "geometry": geometry,
+        "material": _material(),
         "duration_ms": {"type": "integer"},
         "text": {"type": "string"},
         "range_start": {"type": "integer"},
@@ -51,7 +68,8 @@ def build_gemini_schema() -> dict:
     action = _object({
         "action": {"type": "string", "enum": [
             "create", "remove", "show", "hide", "move", "rotate", "scale",
-            "highlight", "focus", "compare", "update_value", "connect", "disconnect", "wait",
+            "highlight", "focus", "compare", "update_value", "set_geometry", "set_material",
+            "connect", "disconnect", "wait",
         ]},
         "target": {"type": "string"},
         "parameters": action_parameters,
@@ -71,10 +89,17 @@ def build_gemini_schema() -> dict:
         "explanation": {"type": "string"},
         "actions": {"type": "array", "items": action},
     }, ["step", "title", "explanation", "actions"])
+    scene = _object({
+        "camera_position": vector,
+        "camera_target": vector,
+        "background_color": {"type": "string"},
+    })
     return _object({
         "concept": {"type": "string"},
         "domain": {"type": "string"},
         "learning_objective": {"type": "string"},
+        "render_mode": {"type": "string", "enum": ["2d", "3d"]},
+        "scene": scene,
         "objects": {"type": "array", "items": animation_object},
         "steps": {"type": "array", "items": step},
-    }, ["concept", "domain", "learning_objective", "objects", "steps"])
+    }, ["concept", "domain", "learning_objective", "render_mode", "objects", "steps"])

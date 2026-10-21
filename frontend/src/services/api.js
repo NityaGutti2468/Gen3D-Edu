@@ -1,9 +1,20 @@
 export async function generatePlan(prompt) {
-  const response = await fetch('/api/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt }),
-  });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 85_000);
+  let response;
+  try {
+    response = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('This lesson is taking too long to generate. Check your connection and try a shorter prompt.');
+    throw new Error('Could not reach the lesson service. Check that the backend is running, then try again.');
+  } finally {
+    window.clearTimeout(timeout);
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.detail || 'The lesson could not be generated. Please try again.');
   return data;

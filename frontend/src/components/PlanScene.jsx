@@ -1,4 +1,8 @@
-import { useMemo } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
+
+const ProjectileScene3D = lazy(() => import('./ProjectileScene3D.jsx'));
+const SemanticScene3D = lazy(() => import('./SemanticScene3D.jsx'));
+const BernoulliScene3D = lazy(() => import('./BernoulliScene3D.jsx'));
 
 function buildScene(plan, stepIndex) {
   const createdLater = new Set(plan.steps.flatMap((step) => step.actions).filter((action) => action.action === 'create').map((action) => action.target));
@@ -30,13 +34,17 @@ function buildScene(plan, stepIndex) {
         if (p.index !== undefined) object.properties.index = p.index;
         if (p.position) object.properties.position = p.position;
       }
+      if (object && action.action === 'rotate' && p.rotation) object.properties.rotation = p.rotation;
+      if (object && action.action === 'scale' && p.scale) object.properties.scale = p.scale;
+      if (object && action.action === 'set_geometry' && p.geometry) object.properties.geometry = p.geometry;
+      if (object && action.action === 'set_material' && p.material) object.properties.material = p.material;
       if (object && action.action === 'focus' && p.index !== undefined) {
         object.properties.index = p.index;
       }
       if (action.action === 'connect' && object && p.target_id) object.connectedTo.add(p.target_id);
       if (action.action === 'disconnect' && object && p.target_id) object.connectedTo.delete(p.target_id);
       if (index === stepIndex) {
-        if (object && ['highlight', 'focus', 'compare', 'connect'].includes(action.action)) object.highlighted = true;
+        if (object && ['highlight', 'focus', 'compare', 'connect', 'rotate', 'scale', 'set_geometry', 'set_material'].includes(action.action)) object.highlighted = true;
         if (p.index !== undefined) selectedIndices.add(p.index);
         if (p.range_start !== undefined && p.range_end !== undefined) arrayRanges.push([p.range_start, p.range_end]);
       }
@@ -260,8 +268,17 @@ function statesFromConnections(objects) {
   return links;
 }
 
-export default function PlanScene({ plan, stepIndex }) {
+export default function PlanScene({ plan, stepIndex, isPlaying = false, speed = 1200, viewMode = plan.render_mode || '2d' }) {
   const scene = useMemo(() => buildScene(plan, stepIndex), [plan, stepIndex]);
+  if (viewMode === '3d' && /bernoulli|venturi/i.test(`${plan.concept} ${plan.domain}`)) {
+    return <div className="scene-content"><div className="scene-callout callout-left">3D SCENE · VENTURI FLOW</div><div className="scene-callout callout-right">{plan.domain}</div><div className="generic-board semantic-3d-board bernoulli-3d-board"><Suspense fallback={<div className="projectile-3d-loading">Building the Venturi flow scene…</div>}><BernoulliScene3D plan={plan} stepIndex={stepIndex} isPlaying={isPlaying} speed={speed} /></Suspense></div></div>;
+  }
+  if (viewMode === '3d' && plan.render_mode === '3d' && plan.concept.toLowerCase().includes('projectile motion') && plan.objects.some((object) => object.id === 'flight_path')) {
+    return <div className="scene-content"><div className="scene-callout callout-left">3D SCENE · BLENDER GLB</div><div className="scene-callout callout-right">{plan.domain}</div><div className="generic-board projectile-3d-board"><Suspense fallback={<div className="projectile-3d-loading">Loading 3D renderer…</div>}><ProjectileScene3D plan={plan} objects={scene.objects} stepIndex={stepIndex} isPlaying={isPlaying} speed={speed} /></Suspense></div></div>;
+  }
+  if (viewMode === '3d') {
+    return <div className="scene-content"><div className="scene-callout callout-left">{scene.objects.length} 3D OBJECT{scene.objects.length === 1 ? '' : 'S'}</div><div className="scene-callout callout-right">{plan.domain}</div><div className="generic-board semantic-3d-board"><Suspense fallback={<div className="projectile-3d-loading">Building the 3D lesson…</div>}><SemanticScene3D plan={plan} objects={scene.objects} stepIndex={stepIndex} ranges={scene.arrayRanges} selectedIndices={scene.selectedIndices} isPlaying={isPlaying} speed={speed} /></Suspense></div></div>;
+  }
   const array = arrayView(scene.objects, scene.arrayRanges, scene.selectedIndices, stepIndex);
   const concept = plan.concept.toLowerCase();
   const specialView = concept.includes('projectile motion')

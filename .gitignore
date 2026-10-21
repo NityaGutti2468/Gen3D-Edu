@@ -6,6 +6,7 @@ __pycache__/
 venv/
 node_modules/
 dist/
+.blender-temp/
 .pytest_cache/
 backend/.auth_secret
 backend/gen3d_edu.db

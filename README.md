@@ -24,3 +24,8 @@ Gen3D-Edu/
 3. Frontend in another terminal: `cd frontend`, `npm install`, `npm run dev`, then open the Vite URL.
 
 The sample Binary Search lesson is visibly labeled as a sample. It is not represented as model output. Generation needs a configured Gemini key. The plan schema uses explicit typed fields; it has no free-form dictionary fields. Local accounts and lesson history live in `backend/gen3d_edu.db`; back up that file if you want to retain local history across machine changes.
+
+
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m uvicorn app.main:app --reload --port 8000

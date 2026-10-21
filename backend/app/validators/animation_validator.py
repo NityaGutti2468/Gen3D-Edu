@@ -1,7 +1,7 @@
 import math
 import re
 
-from app.schemas.animation import ActionType, AnimationPlan, ObjectType
+from app.schemas.animation import ActionType, AnimationPlan, GeometryType, ObjectType
 
 TARGETLESS_ACTIONS = {ActionType.wait}
 
@@ -183,6 +183,32 @@ def validate_plan(plan: AnimationPlan) -> dict:
     if len(known) != len(ids):
         errors.append("Object IDs must be unique.")
     arrays = [obj for obj in plan.objects if obj.type == ObjectType.array]
+    if plan.render_mode == "3d":
+        if not plan.scene or not plan.scene.camera_position or not plan.scene.camera_target:
+            errors.append("A 3D plan must specify scene.camera_position and scene.camera_target.")
+        elif plan.scene.camera_position == plan.scene.camera_target:
+            errors.append("The 3D camera position and target must be different.")
+        if plan.scene:
+            for name, vector in (("camera_position", plan.scene.camera_position), ("camera_target", plan.scene.camera_target)):
+                if vector and any(abs(value) > 10000 for value in (vector.x, vector.y, vector.z)):
+                    errors.append(f"3D scene {name} components exceed the supported range.")
+        for obj in plan.objects:
+            # Every visual in a 3D plan has an explicit primitive and transform.
+            # Edges use endpoint references as their placement, plus the same
+            # transform fields so renderers can apply a consistent contract.
+            if obj.properties.geometry is None:
+                errors.append(f"3D object '{obj.id}' must specify a supported geometry primitive.")
+            if obj.properties.material is None:
+                errors.append(f"3D object '{obj.id}' must specify structured material properties.")
+            if obj.properties.position is None or obj.properties.rotation is None or obj.properties.scale is None:
+                errors.append(f"3D object '{obj.id}' must specify position, rotation, and scale.")
+            if obj.type == ObjectType.edge:
+                if obj.properties.geometry != GeometryType.line:
+                    errors.append(f"3D edge '{obj.id}' must use the line geometry.")
+                if not obj.properties.source_id or not obj.properties.target_id:
+                    errors.append(f"3D edge '{obj.id}' must reference source_id and target_id endpoints.")
+                elif obj.properties.source_id == obj.properties.target_id:
+                    errors.append(f"3D edge '{obj.id}' must connect two distinct objects.")
     for obj in arrays:
         if not obj.properties.values:
             errors.append(f"Array '{obj.id}' must define values.")
@@ -192,6 +218,11 @@ def validate_plan(plan: AnimationPlan) -> dict:
         for endpoint in (obj.properties.source_id, obj.properties.target_id):
             if endpoint and endpoint not in known:
                 errors.append(f"Object '{obj.id}' references missing object '{endpoint}'.")
+        for name, vector in (("position", obj.properties.position), ("rotation", obj.properties.rotation), ("scale", obj.properties.scale)):
+            if vector is not None:
+                limit = 100 if name == "scale" else 3600 if name == "rotation" else 10000
+                if any(abs(value) > limit for value in (vector.x, vector.y, vector.z)):
+                    errors.append(f"Object '{obj.id}' has {name} components outside the supported range.")
 
     for expected, step in enumerate(plan.steps, 1):
         if step.step != expected:
@@ -208,13 +239,31 @@ def validate_plan(plan: AnimationPlan) -> dict:
                 errors.append(f"Step {expected}: {act.action.value} requires parameters.target_id referencing an existing object.")
             if act.action == ActionType.update_value and p.value is None:
                 errors.append(f"Step {expected}: update_value requires parameters.value.")
+            if act.action == ActionType.rotate and p.rotation is None:
+                errors.append(f"Step {expected}: rotate requires parameters.rotation in degrees.")
+            if act.action == ActionType.scale and p.scale is None:
+                errors.append(f"Step {expected}: scale requires parameters.scale.")
+            if act.action == ActionType.set_geometry:
+                if p.geometry is None:
+                    errors.append(f"Step {expected}: set_geometry requires a supported parameters.geometry value.")
+                elif act.target and objects.get(act.target) and objects[act.target].type == ObjectType.edge and p.geometry != GeometryType.line:
+                    errors.append(f"Step {expected}: edge geometry must remain line.")
+            if act.action == ActionType.set_material and p.material is None:
+                errors.append(f"Step {expected}: set_material requires structured parameters.material.")
             if act.action == ActionType.move:
                 target_object = next((obj for obj in plan.objects if obj.id == act.target), None)
                 if target_object is not None and target_object.type == ObjectType.pointer:
                     if p.index is None:
                         errors.append(f"Step {expected}: pointer move requires parameters.index so its array marker can move.")
+                    if plan.render_mode == "3d" and p.position is None:
+                        errors.append(f"Step {expected}: 3D pointer move also requires parameters.position.")
                 elif p.position is None:
                     errors.append(f"Step {expected}: move requires parameters.position.")
+            for name, vector in (("position", p.position), ("rotation", p.rotation), ("scale", p.scale)):
+                if vector is not None:
+                    limit = 100 if name == "scale" else 3600 if name == "rotation" else 10000
+                    if any(abs(value) > limit for value in (vector.x, vector.y, vector.z)):
+                        errors.append(f"Step {expected}: {name} components exceed the supported range.")
             if act.action == ActionType.wait and p.duration_ms is None:
                 warnings.append(f"Step {expected}: wait has no duration_ms; renderer uses a short pause.")
             if p.index is not None and arrays and any(p.index >= len(a.properties.values or []) for a in arrays):

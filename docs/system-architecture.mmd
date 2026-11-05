@@ -1,0 +1,22 @@
+flowchart TD
+    U[ Learner: educational question ] --> UI["React + Vite web application<br/>Account, dashboard, prompt and lesson player"]
+    UI -->|Authenticated JSON request| API[FastAPI REST API]
+    API --> AUTH[Session and request validation]
+    AUTH --> GEN[Lesson generation service]
+    GEN --> DEMO[Built-in deterministic topic demo]
+    GEN --> GEM[Gemini primary provider]
+    GEM -. configured failover .-> OAI[Optional OpenAI backup]
+    DEMO --> PLAN[Typed AnimationPlan]
+    GEM --> PLAN
+    OAI --> PLAN
+    PLAN --> VALID["Pydantic schema and semantic validation<br/>One bounded correction attempt"]
+    VALID -. invalid: correct or reject .-> GEN
+    VALID --> DB[(SQLite: users and private lesson history)]
+    VALID -->|Validated plan JSON| PLAYER[React lesson player]
+    PLAYER --> R2D[2D plan renderer]
+    PLAYER --> R3D[3D renderer: React Three Fiber / Three.js]
+    PLAYER --> CTRL[Step, pause, replay, speed and voice narration]
+    CTRL --> R2D
+    CTRL --> R3D
+    UI <-->|History and backup/restore JSON| DB
+    BLENDER[Blender build-time asset script] -. projectile lesson GLB .-> R3D

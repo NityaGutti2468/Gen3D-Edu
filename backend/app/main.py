@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from pathlib import Path
 import os
 import sqlite3
@@ -6,11 +7,12 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database import create_user, delete_lessons, get_lesson, get_user_by_email, list_lessons, save_lesson, set_lesson_pinned
+from app.database import create_user, delete_lessons, export_lessons, get_lesson, get_user_by_email, import_lessons, list_lessons, save_lesson, set_lesson_pinned
 from app.schemas.animation import GenerateRequest, GenerateResponse, ValidationResult
-from app.schemas.auth import AuthResponse, DeleteLessonsRequest, LessonResponse, LessonSummary, LoginRequest, PinLessonRequest, SignupRequest, UserResponse
+from app.schemas.auth import AuthResponse, DeleteLessonsRequest, LessonResponse, LessonSummary, LoginRequest, PinLessonRequest, RestoreLessonsRequest, SignupRequest, UserResponse
 from app.services.auth_service import SESSION_COOKIE, SESSION_SECONDS, create_session, get_session_user, hash_password, verify_password
 from app.services.animation_service import generate_valid_plan
+from app.validators.animation_validator import validate_plan
 from app.services.llm_service import LLMGenerationError, LLMUnavailable
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
@@ -82,6 +84,25 @@ def logout(response: Response):
 @app.get("/api/lessons", response_model=list[LessonSummary])
 def lesson_history(user: dict = Depends(require_user)):
     return list_lessons(user["id"])
+
+
+@app.get("/api/lessons/export")
+def backup_lessons(user: dict = Depends(require_user)):
+    return {"format": "gen3d-edu-library", "version": 1, "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "lessons": export_lessons(user["id"])}
+
+
+@app.post("/api/lessons/import")
+def restore_lessons(data: RestoreLessonsRequest, user: dict = Depends(require_user)):
+    parsed_lessons = [
+        {"prompt": item.prompt, "plan": item.plan, "is_pinned": item.is_pinned, "created_at": item.created_at}
+        for item in data.lessons
+    ]
+    for index, item in enumerate(parsed_lessons, start=1):
+        validation = validate_plan(item["plan"])
+        if not validation["valid"]:
+            raise HTTPException(status_code=422, detail=f"Backup lesson {index} ({item['plan'].concept}) failed validation: " + "; ".join(validation["errors"][:5]))
+    restored_count = import_lessons(user["id"], parsed_lessons)
+    return {"restored_count": restored_count}
 
 
 @app.get("/api/lessons/{lesson_id}", response_model=LessonResponse)

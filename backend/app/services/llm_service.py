@@ -30,14 +30,10 @@ class GeminiPlanService:
             raise LLMUnavailable("Gemini is not configured. Add GEMINI_API_KEY to backend/.env and restart the API.")
         # Bound each provider call and disable the SDK's multi-minute retry
         # backoff. The service owns a single end-to-end budget across fallbacks.
-        request_timeout_ms = int(os.getenv("GEMINI_REQUEST_TIMEOUT_MS", "20000"))
-        self.client = genai.Client(
-            api_key=key,
-            http_options=types.HttpOptions(
-                timeout=request_timeout_ms,
-                retry_options=types.HttpRetryOptions(attempts=1),
-            ),
-        )
+        self.api_key = key
+        self.request_timeout_ms = int(os.getenv("GEMINI_REQUEST_TIMEOUT_MS", "12000"))
+        self.max_model_attempts = max(1, int(os.getenv("GEMINI_MAX_MODEL_ATTEMPTS", "3")))
+        self.client = self._make_client(self.request_timeout_ms)
         self.model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
         fallback_models = os.getenv("GEMINI_FALLBACK_MODELS", "")
         if fallback_models.strip():
@@ -48,7 +44,17 @@ class GeminiPlanService:
                 "gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash-lite,gemini-3.1-flash-lite",
             )
             self.fallback_models = [model.strip() for model in legacy_fallback.split(",") if model.strip()]
-        logger.info("Gemini model order: %s", " -> ".join(dict.fromkeys([self.model, *self.fallback_models])))
+        model_order = list(dict.fromkeys([self.model, *self.fallback_models]))[: self.max_model_attempts]
+        logger.info("Gemini model attempts (max=%s): %s", self.max_model_attempts, " -> ".join(model_order))
+
+    def _make_client(self, timeout_ms: int):
+        return genai.Client(
+            api_key=self.api_key,
+            http_options=types.HttpOptions(
+                timeout=max(1000, timeout_ms),
+                retry_options=types.HttpRetryOptions(attempts=1),
+            ),
+        )
 
     def generate(
         self,
@@ -61,16 +67,20 @@ class GeminiPlanService:
             contents += "\n\nCorrect this invalid plan, preserve educational intent, and fix every validator error. Return only the corrected AnimationPlan:\n" + correction_context
         try:
             response = None
-            model_candidates = list(dict.fromkeys([self.model, *self.fallback_models]))
+            model_candidates = list(dict.fromkeys([self.model, *self.fallback_models]))[: self.max_model_attempts]
             for index, model in enumerate(model_candidates):
                 remaining_ms = int((deadline - time.monotonic()) * 1000) if deadline is not None else None
                 if remaining_ms is not None and remaining_ms <= 0:
                     raise LLMGenerationError(
-                        "Lesson generation reached its 60-second time limit. Try again, or use a shorter, more specific prompt."
+                        "Gemini's allotted time expired while trying its configured model fallbacks. "
+                        "The request will be handed to the backup provider if one is configured."
                     )
                 try:
                     logger.info("Requesting Gemini model %s", model)
-                    response = self.client.models.generate_content(
+                    call_client = self.client
+                    if remaining_ms is not None and remaining_ms < self.request_timeout_ms:
+                        call_client = self._make_client(remaining_ms)
+                    response = call_client.models.generate_content(
                         model=model,
                         contents=contents,
                         config=types.GenerateContentConfig(
@@ -83,10 +93,12 @@ class GeminiPlanService:
                 except Exception as exc:
                     detail = str(exc)
                     error_code = getattr(exc, "code", None)
-                    unavailable = (
-                        error_code in (404, 503)
-                        or "NOT_FOUND" in detail
-                        or "UNAVAILABLE" in detail
+                    model_not_found = error_code == 404 or "NOT_FOUND" in detail
+                    temporarily_unavailable = error_code == 503 or "UNAVAILABLE" in detail
+                    deadline_exceeded = (
+                        error_code in (408, 504)
+                        or "DEADLINE_EXCEEDED" in detail
+                        or "timed out" in detail.lower()
                     )
                     transient_network = (
                         type(exc).__name__ in {
@@ -102,8 +114,13 @@ class GeminiPlanService:
                         }
                         or "server disconnected without sending a response" in detail.lower()
                     )
-                    if (unavailable or transient_network) and index + 1 < len(model_candidates):
-                        reason = "temporarily unavailable" if unavailable else "connection interrupted"
+                    if (model_not_found or temporarily_unavailable or deadline_exceeded or transient_network) and index + 1 < len(model_candidates):
+                        reason = (
+                            "model not found" if model_not_found
+                            else "temporarily unavailable" if temporarily_unavailable
+                            else "deadline exceeded" if deadline_exceeded
+                            else "connection interrupted"
+                        )
                         logger.warning(
                             "Gemini model %s request %s (provider code %s); retrying with %s",
                             model,
@@ -114,15 +131,26 @@ class GeminiPlanService:
                         if deadline is None or deadline - time.monotonic() > 1:
                             time.sleep(1)
                         continue
-                    if unavailable:
+                    if temporarily_unavailable:
                         raise LLMGenerationError(
-                            "None of the configured Gemini models is currently available to this API key. "
+                            "Gemini is temporarily at capacity (503) across the configured models. "
+                            "This is a provider availability issue, not evidence that the API key is invalid. "
+                            "Wait briefly and retry; if it continues, choose a model available to your key in Google AI Studio."
+                        ) from exc
+                    if model_not_found:
+                        raise LLMGenerationError(
+                            "None of the configured Gemini model IDs was found for this API key. "
                             "Check backend/.env and use model IDs listed for your key in Google AI Studio."
                         ) from exc
                     if transient_network:
                         raise LLMGenerationError(
                             "The connection to Gemini was interrupted while generating this lesson. "
                             "Check your internet connection and submit the prompt again."
+                        ) from exc
+                    if deadline_exceeded:
+                        raise LLMGenerationError(
+                            "Gemini took too long to generate this lesson across the configured models. "
+                            "Wait briefly and try again, or choose a currently responsive model in backend/.env."
                         ) from exc
                     raise
             if not response.text:
@@ -137,7 +165,7 @@ class GeminiPlanService:
         except LLMGenerationError:
             raise
         except Exception as exc:
-            logger.exception("Gemini plan generation failed (model=%s)", self.model)
+            logger.exception("Gemini plan generation failed (model=%s)", model)
             detail = str(exc).replace(os.getenv("GEMINI_API_KEY", "__no_key__"), "[redacted]")
             detail = re.sub(r"AIza[0-9A-Za-z_-]{20,}", "[redacted]", detail)[:320]
             code = getattr(exc, "code", None)

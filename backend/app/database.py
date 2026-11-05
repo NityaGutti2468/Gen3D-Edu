@@ -105,6 +105,46 @@ def list_lessons(user_id: int) -> list[dict]:
         connection.close()
 
 
+def export_lessons(user_id: int) -> list[dict]:
+    connection = connect_db()
+    try:
+        rows = connection.execute(
+            "SELECT prompt, plan_json, created_at, is_pinned FROM lessons WHERE user_id = ? ORDER BY is_pinned DESC, created_at DESC",
+            (user_id,),
+        ).fetchall()
+        return [
+            {"prompt": row["prompt"], "plan": json.loads(row["plan_json"]), "created_at": row["created_at"], "is_pinned": bool(row["is_pinned"])}
+            for row in rows
+        ]
+    finally:
+        connection.close()
+
+
+def import_lessons(user_id: int, lessons: list[dict]) -> int:
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    records = [
+        (
+            str(uuid.uuid4()), user_id, item["prompt"], item["plan"].concept,
+            item["plan"].domain, json.dumps(item["plan"].model_dump(mode="json"), ensure_ascii=False),
+            item.get("created_at") or now, int(item["is_pinned"]),
+        )
+        for item in lessons
+    ]
+    connection = connect_db()
+    try:
+        connection.executemany(
+            "INSERT INTO lessons(id, user_id, prompt, concept, domain, plan_json, created_at, is_pinned) VALUES(?,?,?,?,?,?,?,?)",
+            records,
+        )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+    return len(records)
+
+
 def get_lesson(user_id: int, lesson_id: str) -> dict | None:
     connection = connect_db()
     try:

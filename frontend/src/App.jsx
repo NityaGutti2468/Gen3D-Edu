@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, BookOpen, Check, CircleHelp, Command, GraduationCap, Layers3, LoaderCircle, LogOut, Moon, Plus, Sparkles, Star, Sun, Trash2, Upload, X } from 'lucide-react';
+import { ArrowUpRight, BookOpen, Check, CircleHelp, Command, Download, GraduationCap, Layers3, LoaderCircle, LogOut, Moon, Plus, Sparkles, Star, Sun, Trash2, Upload, X } from 'lucide-react';
 import AuthScreen from './components/AuthScreen.jsx';
 import StepList from './components/StepList.jsx';
 import PlanScene from './components/PlanScene.jsx';
@@ -7,7 +7,7 @@ import PlaybackControls from './components/PlaybackControls.jsx';
 import VoicePromptButton from './components/VoicePromptButton.jsx';
 import { usePlayback } from './hooks/usePlayback.js';
 import { buildStepNarration, chooseNarrationVoice, narrationRate } from './utils/narration.js';
-import { deleteSavedLessons, generatePlan, getCurrentUser, getHealth, getLessonHistory, getSavedLesson, setLessonPinned, signOut } from './services/api.js';
+import { deleteSavedLessons, downloadLessonLibraryBackup, generatePlan, getCurrentUser, getHealth, getLessonHistory, getSavedLesson, restoreLessonLibraryBackup, setLessonPinned, signOut } from './services/api.js';
 
 const demo = {
   concept: 'Binary Search', domain: 'Computer Science · Algorithms', learning_objective: 'Find a target in a sorted array by repeatedly halving the search range.',
@@ -52,6 +52,8 @@ export default function App() {
   const [manageLessons, setManageLessons] = useState(false);
   const [selectedLessonIds, setSelectedLessonIds] = useState([]);
   const [libraryError, setLibraryError] = useState('');
+  const [libraryMessage, setLibraryMessage] = useState('');
+  const [backingUpLibrary, setBackingUpLibrary] = useState(false);
   const [deletingLessons, setDeletingLessons] = useState(false);
   const [activeLessonId, setActiveLessonId] = useState(null);
   const [page, setPage] = useState('dashboard');
@@ -67,7 +69,7 @@ export default function App() {
   playbackPlayingRef.current = playback.isPlaying;
   playbackSpeedRef.current = playback.speed;
   const step = plan.steps[playback.currentStep] || plan.steps[0];
-  const validation = useMemo(() => isDraft ? { valid: true, label: 'Ready for prompt' } : isSample ? { valid: true, label: 'Sample plan' } : { valid: true, label: 'Plan validated' }, [isDraft, isSample]);
+  const validation = useMemo(() => isDraft ? { valid: true, label: 'Ready for prompt' } : isSample ? { valid: true, label: 'Sample plan' } : { valid: true, label: 'Structure checked' }, [isDraft, isSample]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -142,13 +144,37 @@ export default function App() {
     window.setTimeout(() => URL.revokeObjectURL(href), 1000);
   }
 
+  async function downloadLibraryBackup() {
+    if (!history.length || backingUpLibrary) return;
+    setBackingUpLibrary(true); setLibraryError(''); setLibraryMessage('');
+    try {
+      const backup = await downloadLessonLibraryBackup();
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const href = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = href;
+      anchor.download = `gen3d-edu-library-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(anchor); anchor.click(); anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(href), 1000);
+      setLibraryMessage(`Downloaded a backup of ${backup.lessons.length} saved ${backup.lessons.length === 1 ? 'lesson' : 'lessons'}.`);
+    } catch (err) { setLibraryError(err.message || 'Could not download the library backup.'); }
+    finally { setBackingUpLibrary(false); }
+  }
+
   async function importLessonFile(event) {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    setLibraryError('');
+    setLibraryError(''); setLibraryMessage('');
     try {
       const data = JSON.parse(await file.text());
+      if (data?.format === 'gen3d-edu-library' && data.version === 1 && Array.isArray(data.lessons) && data.lessons.length) {
+        if (!window.confirm(`Restore ${data.lessons.length} lessons into your saved library? They will be added as copies; existing lessons will stay.`)) return;
+        const result = await restoreLessonLibraryBackup(data);
+        setHistory(await getLessonHistory());
+        setLibraryMessage(`Restored ${result.restored_count} ${result.restored_count === 1 ? 'lesson' : 'lessons'} to your library.`);
+        return;
+      }
       const importedPlan = data?.format === 'gen3d-edu-lesson' && data.version === 1 ? data.plan : null;
       if (!importedPlan || typeof importedPlan.concept !== 'string' || !Array.isArray(importedPlan.objects) || !Array.isArray(importedPlan.steps) || importedPlan.steps.length === 0 || importedPlan.steps.some((item) => !Array.isArray(item.actions))) {
         throw new Error('This file is not a supported Gen3D-Edu lesson.');
@@ -167,11 +193,50 @@ export default function App() {
   }
 
   useEffect(() => {
-    getHealth().then(() => setApiState('online')).catch(() => setApiState('offline'));
+    let stopped = false;
+    let checking = false;
+    let timer;
+    let controller;
+    let currentState = 'checking';
+    const checkApi = async () => {
+      if (stopped || checking) return;
+      checking = true;
+      controller = new AbortController();
+      const timeout = window.setTimeout(() => controller?.abort(), 4000);
+      try {
+        await getHealth({ signal: controller.signal });
+        currentState = 'online';
+        if (!stopped) setApiState('online');
+      } catch {
+        currentState = 'offline';
+        if (!stopped) setApiState('offline');
+      } finally {
+        window.clearTimeout(timeout);
+        checking = false;
+        if (!stopped) timer = window.setTimeout(checkApi, currentState === 'offline' ? 4000 : 20000);
+      }
+    };
+    const checkWhenVisible = () => {
+      if (document.visibilityState === 'visible') {
+        window.clearTimeout(timer);
+        checkApi();
+      }
+    };
+    window.addEventListener('online', checkWhenVisible);
+    document.addEventListener('visibilitychange', checkWhenVisible);
+    checkApi();
+
     getCurrentUser().then(async (current) => {
       setUser(current);
       try { setHistory(await getLessonHistory()); } catch { setHistory([]); }
     }).catch(() => setUser(null)).finally(() => setAuthChecked(true));
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+      controller?.abort();
+      window.removeEventListener('online', checkWhenVisible);
+      document.removeEventListener('visibilitychange', checkWhenVisible);
+    };
   }, []);
 
   async function onAuthenticated(current) {
@@ -247,9 +312,10 @@ export default function App() {
     <header className="topbar"><a className="brand" href="#top"><span className="brand-mark"><Layers3 size={19} /></span><span>gen3d<span className="brand-light">·edu</span></span></a><div className="topbar-right"><span className={`connection ${apiState}`}><i />{apiState === 'online' ? 'API connected' : apiState === 'offline' ? 'API offline' : 'Checking API'}</span><span className="account-name">{user.name}</span><button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>{theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}<span>{theme === 'dark' ? 'Light' : 'Dark'} mode</span></button><button className="signout-button" onClick={onSignOut} title="Sign out"><LogOut size={15} /><span>Sign out</span></button></div></header>
     <section className="dashboard-content"><div className="dashboard-welcome-row"><div><div className="kicker"><Sparkles size={13} /> YOUR LEARNING STUDIO</div><h1>Welcome back, {user.name.split(' ')[0]}.</h1><p className="dashboard-intro">Pick up where you left off, or turn a new question into an interactive lesson.</p></div><button className="dashboard-signout signout-button" onClick={onSignOut}><LogOut size={15} /><span>Sign out</span></button></div>
       <button className="dashboard-create" onClick={startNewLesson}><span><Plus size={19} /></span><div><strong>Create a new lesson</strong><small>Ask about any topic and explore it step by step.</small></div><ArrowUpRight size={17} /></button>
-      <section className="dashboard-lessons"><div className="dashboard-section-head"><div><div className="panel-label">YOUR LIBRARY</div><h2>Saved lessons</h2></div><div className="library-actions"><span>{history.length} {history.length === 1 ? 'lesson' : 'lessons'}</span><button className="library-manage-button library-import-button" onClick={() => lessonFileInputRef.current?.click()}><Upload size={13} /> Import lesson</button><input ref={lessonFileInputRef} type="file" accept=".json,.gen3d.json,application/json" onChange={importLessonFile} hidden />{history.length > 0 && <button className="library-manage-button" onClick={() => { setManageLessons((value) => !value); setSelectedLessonIds([]); setLibraryError(''); }}>{manageLessons ? 'Done' : 'Manage'}</button>}</div></div>
+      <section className="dashboard-lessons"><div className="dashboard-section-head"><div><div className="panel-label">YOUR LIBRARY</div><h2>Saved lessons</h2></div><div className="library-actions"><span>{history.length} {history.length === 1 ? 'lesson' : 'lessons'}</span>{history.length > 0 && <button className="library-manage-button library-import-button" onClick={downloadLibraryBackup} disabled={backingUpLibrary}><Download size={13} /> {backingUpLibrary ? 'Preparing…' : 'Backup library'}</button>}<button className="library-manage-button library-import-button" onClick={() => lessonFileInputRef.current?.click()}><Upload size={13} /> Import lesson / backup</button><input ref={lessonFileInputRef} type="file" accept=".json,.gen3d.json,application/json" onChange={importLessonFile} hidden />{history.length > 0 && <button className="library-manage-button" onClick={() => { setManageLessons((value) => !value); setSelectedLessonIds([]); setLibraryError(''); }}>{manageLessons ? 'Done' : 'Manage'}</button>}</div></div>
         {manageLessons && history.length > 0 && <div className="library-selection-bar"><button onClick={() => setSelectedLessonIds(selectedLessonIds.length === history.length ? [] : history.map((item) => item.id))}>{selectedLessonIds.length === history.length ? 'Clear selection' : 'Select all'}</button><span>{selectedLessonIds.length} selected</span><button className="library-delete-button" onClick={removeSelectedLessons} disabled={!selectedLessonIds.length || deletingLessons}><Trash2 size={14} />{deletingLessons ? 'Deleting…' : 'Delete selected'}</button></div>}
         {libraryError && <div className="error-message"><X size={13} />{libraryError}</div>}
+        {libraryMessage && <div className="library-success-message"><Check size={13} />{libraryMessage}</div>}
         {history.length ? <div className="dashboard-grid">{history.map((item) => <article key={item.id} className={`dashboard-lesson ${item.is_pinned ? 'pinned' : ''} ${selectedLessonIds.includes(item.id) ? 'selected' : ''}`}>
           <button className="dashboard-lesson-open" onClick={() => openSavedLesson(item.id)}><span className="lesson-icon"><BookOpen size={17} /></span><span className="lesson-date">{new Date(item.created_at).toLocaleDateString()}</span><strong>{item.concept}</strong><small>{item.domain}</small><span className="lesson-open">Open lesson <ArrowUpRight size={13} /></span></button>
           <button className={`lesson-pin-button ${item.is_pinned ? 'active' : ''}`} onClick={() => toggleLessonPin(item)} aria-label={item.is_pinned ? `Unpin ${item.concept}` : `Pin ${item.concept}`} aria-pressed={Boolean(item.is_pinned)} title={item.is_pinned ? 'Unpin lesson' : 'Pin lesson'}><Star size={15} fill={item.is_pinned ? 'currentColor' : 'none'} /></button>
@@ -265,11 +331,11 @@ export default function App() {
     <section className="welcome"><div><div className="kicker"><Sparkles size={13} /> INTERACTIVE LEARNING STUDIO</div><h1>Ideas are better in motion.</h1><p>Turn an educational question into a visual, step-by-step lesson.</p></div><div className="sample-stamp"><span>✳</span> {isDraft ? 'NEW LESSON' : isSample ? 'SAMPLE LESSON' : 'GENERATED LESSON'}</div></section>
     <section className="workbench">
       <aside className="panel lesson-nav"><div className="panel-label">LESSON OUTLINE <span>{String(plan.steps.length).padStart(2, '0')}</span></div><StepList steps={plan.steps} current={playback.currentStep} onSelect={playback.goToStep} /><section className="history-block"><div className="panel-label">SAVED LESSONS <span>{history.length}</span></div><div className="history-items">{history.length ? history.map((item) => <button key={item.id} className={`history-item ${activeLessonId === item.id ? 'active' : ''}`} onClick={() => openSavedLesson(item.id)}><strong>{item.concept}</strong><span>{item.domain}</span><time>{new Date(item.created_at).toLocaleDateString()}</time></button>) : <div className="history-empty">Generated lessons will be saved here for next time.</div>}</div></section><div className="objective-block"><div className="panel-label">LEARNING OBJECTIVE</div><h3>{plan.concept}</h3><p>{plan.learning_objective}</p><div className="domain-chip"><GraduationCap size={13} /> {plan.domain}</div></div></aside>
-      <section className="panel visualization"><div className="visual-top"><div><div className="visual-title">{plan.concept}</div><div className="visual-sub">Structured plan <span>/</span> {viewMode === '3d' ? (plan.concept.toLowerCase().includes('projectile motion') ? 'Blender GLB · 3D scene' : 'Interactive 3D scene') : '2D scene view'}</div></div><div className="visual-status"><span className="status-dot" /> {isDraft ? 'AWAITING PROMPT' : isSample ? 'EXAMPLE' : 'PLAN READY'}</div></div><div className="scene-grid" /><PlanScene key={activeLessonId ?? (isDraft ? 'draft' : isSample ? 'sample' : plan.concept)} plan={plan} stepIndex={playback.currentStep} isPlaying={playback.isPlaying} speed={playback.speed} viewMode={viewMode} /><div className="visual-bottom"><span><Command size={12} /> STEP {String(playback.currentStep + 1).padStart(2, '0')} / {String(plan.steps.length).padStart(2, '0')}</span><span>{isDraft ? 'ENTER A TOPIC TO BEGIN' : 'SCHEMA · VALIDATED'}</span></div><div className="playback-wrap"><PlaybackControls playback={playback} voiceEnabled={voiceEnabled} onToggleVoice={toggleVoice} voiceSupported={voiceSupported} voiceError={voiceError} onReplayNarration={() => { if (!voiceEnabled) setVoiceEnabled(true); setNarrationReplayKey((key) => key + 1); }} viewMode={viewMode} onChangeViewMode={setViewMode} canToggleView={canToggleView} onDownloadLesson={downloadCurrentLesson} canDownloadLesson={!isDraft && canToggleView} /></div><div className="progress-track"><i style={{ width: `${((playback.currentStep + 1) / plan.steps.length) * 100}%` }} /></div></section>
+      <section className="panel visualization"><div className="visual-top"><div><div className="visual-title">{plan.concept}</div><div className="visual-sub">Structured plan <span>/</span> {viewMode === '3d' ? (plan.concept.toLowerCase().includes('projectile motion') ? 'Blender GLB · 3D scene' : 'Interactive 3D scene') : '2D scene view'}</div></div><div className="visual-status"><span className="status-dot" /> {isDraft ? 'AWAITING PROMPT' : isSample ? 'EXAMPLE' : 'STRUCTURE CHECKED'}</div></div><div className="scene-grid" /><PlanScene key={activeLessonId ?? (isDraft ? 'draft' : isSample ? 'sample' : plan.concept)} plan={plan} stepIndex={playback.currentStep} isPlaying={playback.isPlaying} speed={playback.speed} viewMode={viewMode} /><div className="visual-bottom"><span><Command size={12} /> STEP {String(playback.currentStep + 1).padStart(2, '0')} / {String(plan.steps.length).padStart(2, '0')}</span><span>{isDraft ? 'ENTER A TOPIC TO BEGIN' : 'SCHEMA · CHECKED'}</span></div><div className="playback-wrap"><PlaybackControls playback={playback} voiceEnabled={voiceEnabled} onToggleVoice={toggleVoice} voiceSupported={voiceSupported} voiceError={voiceError} onReplayNarration={() => { if (!voiceEnabled) setVoiceEnabled(true); setNarrationReplayKey((key) => key + 1); }} viewMode={viewMode} onChangeViewMode={setViewMode} canToggleView={canToggleView} onDownloadLesson={downloadCurrentLesson} canDownloadLesson={!isDraft && canToggleView} /></div><div className="progress-track"><i style={{ width: `${((playback.currentStep + 1) / plan.steps.length) * 100}%` }} /></div></section>
       <aside className="right-rail"><section className="panel explain-panel"><div className="explain-heading"><span>THE WALKTHROUGH</span><span>{String(playback.currentStep + 1).padStart(2, '0')} — {String(plan.steps.length).padStart(2, '0')}</span></div><div className="walkthrough-copy" key={`${activeLessonId ?? plan.concept}-${playback.currentStep}`}><h2>{step.title}</h2><p>{step.explanation}</p></div><div className="key-insight"><span>✳ &nbsp; THE TAKEAWAY</span><p>{step.insight || plan.learning_objective}</p></div><div className="metrics"><div><span>PLAN STEPS</span><b>{String(plan.steps.length).padStart(2, '0')}</b></div><div><span>VALIDATION</span><b className="valid-text"><Check size={13} /> {validation.label}</b></div></div></section>
         <section className="panel generate-panel"><div className="generate-head"><span className="spark-icon"><Sparkles size={14} /></span><div><h3>Make a new lesson</h3><p>What would you like to understand?</p></div></div><form onSubmit={onGenerate}><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. Show how gradient descent finds a minimum…" maxLength={1500} /><div className="form-footer"><span>{prompt.length}/1500</span><VoicePromptButton value={prompt} onChange={setPrompt} onError={setError} /><button className="generate-button" disabled={generating}>{generating ? <><LoaderCircle className="spin" size={14} /> Planning</> : <>Generate <ArrowUpRight size={14} /></>}</button></div></form>{error && <div className="error-message"><X size={13} />{error}</div>}<div className="pipeline"><span><i /> REASON</span><b>→</b><span><i /> VALIDATE</span><b>→</b><span><i /> VISUALIZE</span></div></section>
       </aside>
     </section>
-    <footer className="footer"><span><span className="footer-pulse" /> {isDraft ? 'Waiting for your lesson topic' : isSample ? 'Exploring a sample AnimationPlan' : 'AnimationPlan generated and validated'}</span><span>Educational reasoning <b>→</b> structured plan <b>→</b> visual execution</span></footer>
+    <footer className="footer"><span><span className="footer-pulse" /> {isDraft ? 'Waiting for your lesson topic' : isSample ? 'Exploring a sample AnimationPlan' : 'Animation plan structure checked; content requires review'}</span><span>Educational reasoning <b>→</b> structured plan <b>→</b> visual execution</span></footer>
   </main>;
 }

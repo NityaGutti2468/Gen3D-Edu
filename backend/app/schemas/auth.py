@@ -1,6 +1,8 @@
 import re
 
-from pydantic import BaseModel, Field, field_validator
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.animation import AnimationPlan
 
@@ -75,3 +77,21 @@ class LessonResponse(BaseModel):
     created_at: str
     is_pinned: bool = False
     plan: AnimationPlan
+
+
+class BackupLesson(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str = Field(min_length=1, max_length=1500)
+    plan: AnimationPlan
+    is_pinned: bool = False
+    created_at: str | None = Field(default=None, max_length=40)
+
+
+class RestoreLessonsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    format: Literal["gen3d-edu-library"]
+    version: Literal[1]
+    exported_at: str | None = None
+    lessons: list[BackupLesson] = Field(min_length=1, max_length=500)

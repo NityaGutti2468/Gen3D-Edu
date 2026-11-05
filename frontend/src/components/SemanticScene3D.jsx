@@ -243,8 +243,8 @@ function SemanticCanvas({ plan, objects, stepIndex, ranges, selectedIndices, spe
   });
   drawable.forEach((object, index) => {
     const supplied = object.properties?.position;
-    const position = supplied && plan.render_mode !== '3d'
-      ? legacyPosition(vec(supplied))
+    const position = supplied
+      ? plan.render_mode === '3d' ? vec(supplied) : legacyPosition(vec(supplied))
       : objectPosition(object, index, drawable.length);
     objectPositions.set(object.id, position);
     if (object.type === 'node' || object.type === 'shape') nodePositions.set(object.id, position);

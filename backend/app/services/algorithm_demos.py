@@ -6,6 +6,8 @@ from app.schemas.animation import AnimationPlan
 
 def deterministic_topic_demo(prompt: str) -> AnimationPlan | None:
     normalized = re.sub(r"[^a-z0-9]+", " ", prompt.lower()).strip()
+    if re.search(r"\brag\b|\bretrieval augmented generation\b", normalized):
+        return rag_pipeline_demo(prompt)
     if "tcp" in normalized and ("handshake" in normalized or "syn" in normalized):
         return tcp_handshake_demo(prompt)
     if any(word in normalized for word in ("projectile", "trajectory", "launch angle", "launched at")):
@@ -19,6 +21,83 @@ def deterministic_topic_demo(prompt: str) -> AnimationPlan | None:
     if "binary search" in normalized:
         return binary_search_demo(prompt)
     return generic_sliding_window_demo(prompt)
+
+
+def rag_pipeline_demo(prompt: str) -> AnimationPlan:
+    """Build a clear, stepwise RAG pipeline with persistent directed data-flow edges."""
+    node_specs = [
+        ("query", "User Question", "sphere", -8.0, 1.0, "#4E82F5"),
+        ("embedder", "Embedding Model", "cylinder", -5.0, 0.0, "#8B72E8"),
+        ("vector_db", "Vector Database", "cylinder", -2.0, 0.0, "#24A875"),
+        ("chunks", "Relevant Chunks", "box", 1.0, 0.0, "#E99B47"),
+        ("augmented", "Augmented Prompt", "box", 1.5, 3.2, "#40A9C4"),
+        ("llm", "LLM Generator", "sphere", 5.0, 0.0, "#8B72E8"),
+        ("answer", "Grounded Answer", "box", 8.0, 0.0, "#4E82F5"),
+    ]
+    objects = [
+        {
+            "id": object_id,
+            "type": "node",
+            "label": label,
+            "properties": {
+                "geometry": geometry,
+                "position": {"x": x, "y": y, "z": 0},
+                "rotation": {"x": 0, "y": 0, "z": 0},
+                "scale": {"x": 1, "y": 1, "z": 1},
+                "material": {"color": color, "roughness": 0.4, "metalness": 0.16, "opacity": 1},
+            },
+        }
+        for object_id, label, geometry, x, y, color in node_specs
+    ]
+    edge_specs = [
+        ("query_to_embedder", "Question", "query", "embedder"),
+        ("embedding_to_db", "Query vector", "embedder", "vector_db"),
+        ("db_to_chunks", "Top matches", "vector_db", "chunks"),
+        ("query_to_augmented", "Original question", "query", "augmented"),
+        ("chunks_to_augmented", "Retrieved context", "chunks", "augmented"),
+        ("augmented_to_llm", "Question + context", "augmented", "llm"),
+        ("llm_to_answer", "Generated answer", "llm", "answer"),
+    ]
+    objects.extend({
+        "id": edge_id,
+        "type": "edge",
+        "label": label,
+        "properties": {
+            "geometry": "line",
+            "position": {"x": 0, "y": 0, "z": 0},
+            "rotation": {"x": 0, "y": 0, "z": 0},
+            "scale": {"x": 1, "y": 1, "z": 1},
+            "source_id": source,
+            "target_id": target,
+            "material": {"color": "#64BFE5", "roughness": 0.45, "metalness": 0.12, "opacity": 1},
+        },
+    } for edge_id, label, source, target in edge_specs)
+
+    def reveal(step: int, title: str, explanation: str, node_ids: list[str], edge_ids: list[str]) -> dict:
+        actions = [{"action": "create", "target": node_id} for node_id in node_ids]
+        actions.extend({"action": "create", "target": edge_id} for edge_id in edge_ids)
+        focus_target = edge_ids[-1] if edge_ids else node_ids[-1]
+        actions.append({"action": "focus", "target": focus_target})
+        return {"step": step, "title": title, "explanation": explanation, "actions": actions}
+
+    steps = [
+        reveal(1, "Start with a question", "A user asks a question. RAG uses this same question both to search for useful material and to guide the final answer.", ["query"], []),
+        reveal(2, "Turn the question into a vector", "An embedding model maps the question to a numeric vector. Similar meanings can then be compared by distance in vector space.", ["embedder"], ["query_to_embedder"]),
+        reveal(3, "Search the vector database", "The query vector is compared with stored document vectors. The database returns the closest matching chunks; it does not send the whole database to the language model.", ["vector_db"], ["embedding_to_db"]),
+        reveal(4, "Retrieve relevant chunks", "The top matching text chunks are returned as context. Retrieval quality depends on the indexed documents and the search settings.", ["chunks"], ["db_to_chunks"]),
+        reveal(5, "Augment the original question", "The system combines the original question with the retrieved context. Keeping both matters: the question says what to answer, and the chunks supply supporting information.", ["augmented"], ["query_to_augmented", "chunks_to_augmented"]),
+        reveal(6, "Generate from question plus context", "The language model receives the augmented prompt and writes an answer using the retrieved material. RAG can reduce unsupported answers, but retrieval does not guarantee factual correctness.", ["llm"], ["augmented_to_llm"]),
+        reveal(7, "Return the answer", "The answer is returned to the user. A production system can also show source references so the learner can inspect the passages behind the response.", ["answer"], ["llm_to_answer"]),
+    ]
+    return AnimationPlan.model_validate({
+        "concept": "Retrieval-Augmented Generation (RAG)",
+        "domain": "Artificial Intelligence - Language Models",
+        "learning_objective": "Trace how a question is embedded, matched with relevant text, combined with that text, and answered by a language model.",
+        "render_mode": "3d",
+        "scene": {"camera_position": {"x": 0, "y": 9.5, "z": 30}, "camera_target": {"x": 0, "y": 1.0, "z": 0}, "background_color": "#0B1220"},
+        "objects": objects,
+        "steps": steps,
+    })
 
 
 def gradient_descent_demo(prompt: str) -> AnimationPlan | None:

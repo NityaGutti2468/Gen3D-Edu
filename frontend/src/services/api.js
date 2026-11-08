@@ -11,6 +11,7 @@ export async function generatePlan(prompt) {
   try {
     response = await fetch(apiUrl('/api/generate'), {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt }),
       signal: controller.signal,

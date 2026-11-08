@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -6,7 +7,8 @@ from pathlib import Path
 
 from app.schemas.animation import AnimationPlan
 
-DB_PATH = Path(__file__).resolve().parents[1] / "gen3d_edu.db"
+DB_PATH = Path(os.getenv("DATABASE_PATH", str(Path(__file__).resolve().parents[1] / "gen3d_edu.db")))
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def connect_db() -> sqlite3.Connection:

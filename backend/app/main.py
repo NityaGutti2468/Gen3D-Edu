@@ -17,7 +17,12 @@ from app.services.llm_service import LLMGenerationError, LLMUnavailable
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=True)
 app = FastAPI(title="Gen3D-Edu API", version="1.0.0", description="Validated educational AnimationPlan generation")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+frontend_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("FRONTEND_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
+app.add_middleware(CORSMiddleware, allow_origins=frontend_origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
 def require_user(request: Request) -> dict:

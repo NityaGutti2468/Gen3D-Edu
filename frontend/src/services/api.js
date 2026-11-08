@@ -1,9 +1,15 @@
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+
+function apiUrl(path) {
+  return `${API_BASE_URL}${path}`;
+}
+
 export async function generatePlan(prompt) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 75_000);
   let response;
   try {
-    response = await fetch('/api/generate', {
+    response = await fetch(apiUrl('/api/generate'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt }),
@@ -21,7 +27,7 @@ export async function generatePlan(prompt) {
 }
 
 async function authRequest(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await fetch(apiUrl(path), {
     ...options,
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
@@ -77,7 +83,7 @@ export function deleteSavedLessons(lessonIds) {
 }
 
 export async function getHealth({ signal } = {}) {
-  const response = await fetch('/api/health', { cache: 'no-store', signal });
+  const response = await fetch(apiUrl('/api/health'), { cache: 'no-store', signal });
   if (!response.ok) throw new Error('API unavailable');
   return response.json();
 }

@@ -33,12 +33,15 @@ def require_user(request: Request) -> dict:
 
 
 def set_session_cookie(response: Response, user: dict) -> None:
+    secure_cookie = os.getenv("AUTH_COOKIE_SECURE", "false").casefold() == "true"
     response.set_cookie(
         key=SESSION_COOKIE,
         value=create_session(user),
         httponly=True,
-        secure=os.getenv("AUTH_COOKIE_SECURE", "false").casefold() == "true",
-        samesite="lax",
+        secure=secure_cookie,
+        # Render assigns separate onrender.com sites to the frontend and API.
+        # Cross-site fetches need SameSite=None and Secure to carry auth cookies.
+        samesite="none" if secure_cookie else "lax",
         max_age=SESSION_SECONDS,
         path="/",
     )
@@ -82,7 +85,14 @@ def me(user: dict = Depends(require_user)):
 
 @app.post("/api/auth/logout")
 def logout(response: Response):
-    response.delete_cookie(key=SESSION_COOKIE, path="/", httponly=True, samesite="lax")
+    secure_cookie = os.getenv("AUTH_COOKIE_SECURE", "false").casefold() == "true"
+    response.delete_cookie(
+        key=SESSION_COOKIE,
+        path="/",
+        httponly=True,
+        secure=secure_cookie,
+        samesite="none" if secure_cookie else "lax",
+    )
     return {"message": "Signed out."}
 
 
